@@ -152,3 +152,29 @@ test('le curiosità ignorano i voti dei cattivi', async () => {
   assert.doesNotMatch(fatti, /a vicenda/);
   assert.doesNotMatch(fatti, /Mitomane M si è fatto votare/);
 });
+
+test('punteggi: la squadra pesa più dei bonus personali', async () => {
+  const G = await import('../js/game.js');
+  const ruoli = { a: 'Assassino', m: 'Mitomane', i: 'Investigatore', c: 'Cittadino', d: 'Cittadina' };
+  const voti = { a: 'i', m: 'c', i: 'a', c: 'm', d: 'm' };
+  const esito = G.esitoVoto(ruoli, voti); // 1 giusto, 2 sbagliati (al Mitomane): vincono i cattivi
+  const p = G.punteggi(ruoli, voti, esito);
+  assert.equal(esito.vincitore, G.CATTIVI);
+  assert.equal(p.a.totale, 10);              // vince, ma l'Investigatore l'ha votato
+  assert.equal(p.m.totale, 10 + 2);          // vince e 2 buoni ci sono cascati
+  assert.equal(p.i.totale, 2);               // perde ma vota giusto
+  assert.equal(p.c.totale, -1);
+  const vincente = Math.min(p.a.totale, p.m.totale);
+  assert.ok(Object.values(p).every((x) => Math.abs(x.totale) < 10 || x.totale >= 10), 'solo chi vince arriva a 10');
+  assert.ok(vincente > Math.max(p.i.totale, p.c.totale, p.d.totale) + 5);
+
+  const senzaAssassini = { m: 'Mitomane', av: 'Avvocato', c: 'Cittadino' };
+  const p2 = G.punteggi(senzaAssassini, { av: 'c', c: G.CIELO }, G.esitoVoto(senzaAssassini, { av: 'c', c: G.CIELO }));
+  assert.equal(p2.c.voci.find((v) => v.m === 'Cielo giusto').p, 3);
+  assert.equal(p2.av.voci.at(-1).p, -2); // sbaglia con un indizio in mano
+
+  const cl = G.aggiungiAllaClassifica(G.aggiungiAllaClassifica({}, { punti: p, giocatori: { a: 'A' }, vincitori: esito.vincitori }), { punti: p, vincitori: esito.vincitori });
+  assert.equal(cl.a.punti, 20);
+  assert.equal(cl.a.vinte, 2);
+  assert.equal(G.ordinaClassifica(cl)[0].punti, 24); // il Mitomane: 12 + 12
+});

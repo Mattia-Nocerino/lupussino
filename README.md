@@ -57,12 +57,13 @@ Dati nel Realtime Database:
 | `rooms/{id}` | tutti i loggati | nome, capo stanza, stato `lobby → playing → ended`, round, giocatori (con `online`), chi ha votato, risultato |
 | `hands/{id}/{round}/{uid}` | solo quel giocatore (e il capo stanza) | la tua carta e le tue informazioni |
 | `secret/{id}/{round}` | solo il capo stanza | mazzo completo e scarti |
-| `votes/{id}/{round}/{uid}` | quel giocatore e il capo stanza | `{bersaglio, cambi, at}`: il voto (scrivibile una volta sola), i ripensamenti e l'ora |
+| `votes/{id}/{round}/{uid}` | quel giocatore e il capo stanza | `{bersaglio, cambi, at}`: il voto (modificabile finché si gioca), i ripensamenti e l'ora |
 | `games/{id}_{round}` | tutti i loggati | storico partite: ruoli, voti, vincitori, ripensamenti, tempi; base di classifiche e curiosità |
 
 - **Avvio**: il browser del capo stanza mescola il mazzo e scrive carte, mazzo e stato della stanza in un'unica scrittura atomica.
 - **Voto**: ognuno scrive il proprio voto e segna `voted/{uid}`: tutti vedono chi manca, non per chi.
-- **Fine**: quando tutti hanno votato, il capo stanza calcola il vincitore, rivela ruoli e voti nella stanza e salva la partita in `games/`.
+- **Fine**: quando tutti hanno votato restano 5 secondi per cambiare idea, poi il capo stanza calcola vincitore e punti, rivela ruoli e voti dei buoni, aggiorna la classifica della stanza (`rooms/{id}/classifica`) e salva la partita in `games/`.
+- **Punti**: 10 a chi vince; voto giusto +2 (cielo giusto +3); voto sbagliato -1 (-2 per Investigatore/trice e Avvocato, che avevano un indizio); Assassino che nessun buono ha votato +2; Mitomane +1 per ogni buono che l'ha votato (max +3). Pareggio: nessuno prende i 10 punti. I voti dei cattivi non contano.
 - **Casualità**: mazzo, carta vista dagli investigatori e buono rivelato all'Avvocato usano il generatore crittografico del browser (`crypto.getRandomValues`).
 - **Presenza**: quando un telefono si disconnette, il server lo segna `online: false` da solo (`onDisconnect`). Se il capo stanza resta offline per 20 secondi, il primo giocatore online diventa capo stanza e, se serve, chiude lui il conteggio.
 - **Rimozione**: il capo stanza può rimuovere un giocatore in qualsiasi momento; a partita in corso il round prosegue senza di lui e il suo voto non conta.

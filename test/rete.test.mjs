@@ -46,10 +46,13 @@ test('ognuno riceve solo la propria carta e il proprio voto, mai il mazzo', asyn
   assert.deepEqual(Object.keys(ospite.albero).sort(), ['hands', 'rooms']);
   assert.deepEqual(ospite.albero.hands, { r1: { 1: { u1: { ruolo: 'Cittadino' } } } });
   await L.update(L.ref(ospite), { 'votes/r1/1/u1': { bersaglio: 'capo', cambi: 0 }, 'rooms/r1/voted/u1': true });
-  await assert.rejects(L.update(L.ref(ospite), { 'votes/r1/1/u1': { bersaglio: 'u2' } }), /Permesso/); // voto unico
-  await assert.rejects(L.set(L.ref(ospite, 'votes/r1/1/u1'), { bersaglio: 'u1' }), /Permesso/);
-  assert.equal((await L.get(L.ref(capo, 'votes/r1/1/u1/bersaglio'))).val(), 'capo');
-  assert.equal(ospite.albero.votes.r1[1].u1.bersaglio, 'capo');
+  await assert.rejects(L.update(L.ref(ospite), { 'rooms/r1/voted/u1': true }), /Permesso/); // "ha votato" si segna una volta
+  await L.set(L.ref(ospite, 'votes/r1/1/u1'), { bersaglio: 'u2', cambi: 1 }); // il voto si può cambiare finché si gioca
+  await assert.rejects(L.set(L.ref(ospite, 'votes/r1/1/u1'), { bersaglio: 'u1' }), /Permesso/); // mai sé stessi
+  await assert.rejects(L.set(L.ref(ospite, 'votes/r1/1/u2'), { bersaglio: 'capo' }), /Permesso/); // mai per un altro
+  assert.equal((await L.get(L.ref(capo, 'votes/r1/1/u1/bersaglio'))).val(), 'u2');
+  await L.update(L.ref(capo), { 'rooms/r1/status': 'ended' });
+  await assert.rejects(L.set(L.ref(ospite, 'votes/r1/1/u1'), { bersaglio: 'capo' }), /Permesso/); // a partita finita no
 });
 
 test('se un ospite cade il capo lo segna offline; se è stato rimosso non lo ricrea', async () => {

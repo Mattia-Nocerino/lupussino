@@ -42,26 +42,13 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ⬜ Provare su telefoni veri: iPhone capo, Android capo, misto (vedi `prova-rete.html`)
 - ⬜ Web NFC su Android per collegarsi avvicinando i telefoni invece dei QR (extra)
 
-## Fase 4: punteggi, moltiplicatori e bonus (proposte da scegliere)
-Base proposta: chi vince prende **10 punti**, chi perde 0.
-
-Bonus individuali proposti per i buoni:
-- **Fiuto**: +5 se hai votato giusto (anche quando la tua squadra perde, +2)
-- **Cielo coraggioso**: ×2 ai buoni che hanno votato cielo quando era giusto (è la scommessa più rischiosa)
-- **Squadra perfetta**: +5 a tutti i buoni se nessun buono ha sbagliato
-- **Investigatore efficace**: +3 se l'Investigatore vota giusto (premia chi usa bene l'informazione)
-- **Malus "fuoco amico"**: -2 a chi vota un buono (alimenta anche la classifica del peggior giocatore)
-
-Bonus per i cattivi:
-- **Inosservato**: +5 all'Assassino che non ha ricevuto nessun voto
-- **Bersaglio perfetto**: ×2 al Mitomane se è il giocatore più votato
-- **Disastro totale**: ×2 a tutti i cattivi se tutti i voti dei buoni sono sbagliati
-- **Assassino solitario**: +3 se vinci essendo l'unico assassino in gioco
-
-Altre idee:
-- Moltiplicatore per numero di giocatori (vincere in 7 vale più che in 3)
-- Serie di vittorie consecutive (×1.5 dalla terza)
-- ❓ Scegliere quali bonus tenere e se i punti si sommano sempre o solo nella stessa serata
+## Fase 4: punteggi (deciso da Claude il 7 ottobre 2026, su richiesta di Mattia: i bonus personali devono pesare molto meno della squadra)
+- ✅ Squadra vincente: **+10** a testa. Pareggio: nessuno prende i 10.
+- ✅ Buoni: voto giusto **+2**, cielo giusto **+3**, voto sbagliato **-1**, voto sbagliato da Investigatore/Investigatrice/Avvocato **-2** (avevano un indizio).
+- ✅ Assassino che nessun buono ha votato: **+2**. Mitomane: **+1** per ogni buono che l'ha votato, massimo **+3**.
+- ✅ I voti dei cattivi non danno né tolgono punti (e non si mostrano a fine partita).
+- ✅ Classifica della stanza in diretta (`rooms/{id}/classifica`) e "⭐ Più punti" nelle classifiche generali.
+- ⬜ Altre idee da valutare: moltiplicatore per numero di giocatori, serie di vittorie.
 
 ## Regole confermate da Mattia (7 ottobre 2026)
 - Da 3 a 9 giocatori (tutte le configurazioni).

@@ -135,7 +135,7 @@ export class Capo extends Db {
           && (stanza.status !== 'playing' || (stanza.players?.[uid] && (p.length > 4 || v !== null))))
         || (p[0] === 'rooms' && p[2] === 'voted' && p[3] === uid && p.length === 4 && v === true
           && stanza?.status === 'playing' && stanza.inGioco?.[uid] && !stanza.voted?.[uid])
-        || (p[0] === 'votes' && p[3] === uid && p.length === 4 && !leggi(this.albero, path)
+        || (p[0] === 'votes' && p[3] === uid && p.length === 4
           && leggi(this.albero, `rooms/${p[1]}/status`) === 'playing'
           && String(leggi(this.albero, `rooms/${p[1]}/round`)) === p[2]
           && v?.bersaglio && v.bersaglio !== uid)

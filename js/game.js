@@ -169,10 +169,11 @@ export function statistiche(partite) {
       if (p.ospiti?.[uid]) continue; // gli ospiti non entrano in classifica
       const s = (st[uid] ??= {
         uid, nome: '', giocate: 0, vinte: 0, giocateAssassino: 0, vinteAssassino: 0,
-        giocateMitomane: 0, vinteMitomane: 0, votiDaBuono: 0, votiSbagliati: 0,
+        giocateMitomane: 0, vinteMitomane: 0, votiDaBuono: 0, votiSbagliati: 0, punti: 0,
       });
       s.nome = p.giocatori?.[uid] ?? s.nome; // vale l'ultimo nome usato
       s.giocate++;
+      s.punti += p.punti?.[uid]?.totale ?? 0;
       const vinto = vincitori.includes(uid);
       if (vinto) s.vinte++;
       if (ruolo === 'Assassino') { s.giocateAssassino++; if (vinto) s.vinteAssassino++; }
@@ -204,6 +205,7 @@ export function classifiche(partite, { minimoVoti = 3, quanti = 5 } = {}) {
     percMitomane: perc(s.vinteMitomane, s.giocateMitomane),
   }));
   return {
+    punti: top(conPerc.filter((s) => s.punti !== 0), 'punti', 'vinte'),
     migliore: top(conPerc.filter((s) => s.vinte > 0), 'vinte', 'percVinte'),
     assassino: top(conPerc.filter((s) => s.vinteAssassino > 0), 'vinteAssassino', 'percAssassino'),
     mitomane: top(conPerc.filter((s) => s.vinteMitomane > 0), 'vinteMitomane', 'percMitomane'),
@@ -284,3 +286,60 @@ export function curiosita(partita, storico = [], { quante = 4, rng = casuale } =
 
   return fatti.sort((a, b) => b[0] - a[0]).slice(0, quante).map(([, f]) => f);
 }
+
+// ---------- punteggi ----------
+// La squadra conta molto più del singolo: chi vince prende 10 punti, i bonus e malus individuali
+// valgono da -2 a +3. I voti dei cattivi non contano, quindi non danno né tolgono punti.
+export const PUNTI = {
+  vittoria: 10,
+  votoGiusto: 2,
+  cieloGiusto: 3,             // il voto più rischioso
+  votoSbagliato: -1,
+  votoSbagliatoConIndizio: -2, // Investigatore/trice e Avvocato avevano un'informazione in più
+  assassinoInvisibile: 2,      // nessun buono l'ha votato
+  votoAlMitomane: 1,           // per ogni buono che ci è cascato
+  maxMitomane: 3,
+};
+
+export function punteggi(assegnazioni, voti, esito) {
+  const punti = {};
+  const vincitori = lista(esito.vincitori);
+  const ricevuti = {};
+  for (const [chi, b] of Object.entries(voti ?? {})) {
+    if (RUOLI[assegnazioni[chi]]?.squadra === BUONI) ricevuti[b] = (ricevuti[b] ?? 0) + 1;
+  }
+  for (const [uid, ruolo] of Object.entries(assegnazioni)) {
+    const voci = [];
+    if (vincitori.includes(uid)) voci.push({ m: 'Squadra vincente', p: PUNTI.vittoria });
+    const giusto = esito.dettaglio?.[uid];
+    if (giusto === true) {
+      voci.push(voti[uid] === CIELO ? { m: 'Cielo giusto', p: PUNTI.cieloGiusto } : { m: 'Voto giusto', p: PUNTI.votoGiusto });
+    } else if (giusto === false) {
+      const indizio = isInvestigatore(ruolo) || ruolo === 'Avvocato';
+      voci.push(indizio ? { m: 'Voto sbagliato con un indizio in mano', p: PUNTI.votoSbagliatoConIndizio } : { m: 'Voto sbagliato', p: PUNTI.votoSbagliato });
+    }
+    if (isAssassino(ruolo) && !ricevuti[uid]) voci.push({ m: 'Nessun buono ti ha votato', p: PUNTI.assassinoInvisibile });
+    if (ruolo === 'Mitomane' && ricevuti[uid]) {
+      voci.push({ m: `${ricevuti[uid]} buoni ci sono cascati`, p: Math.min(PUNTI.maxMitomane, ricevuti[uid] * PUNTI.votoAlMitomane) });
+    }
+    punti[uid] = { totale: voci.reduce((t, v) => t + v.p, 0), voci };
+  }
+  return punti;
+}
+
+// Somma i punti di una partita alla classifica della stanza ({ uid: { nome, punti, partite, vinte } }).
+export function aggiungiAllaClassifica(classifica, partita) {
+  const nuova = structuredClone(classifica ?? {});
+  for (const [uid, { totale }] of Object.entries(partita.punti ?? {})) {
+    const r = (nuova[uid] ??= { nome: '', punti: 0, partite: 0, vinte: 0 });
+    r.nome = partita.giocatori?.[uid] ?? r.nome;
+    r.punti += totale;
+    r.partite += 1;
+    if (lista(partita.vincitori).includes(uid)) r.vinte += 1;
+  }
+  return nuova;
+}
+
+export const ordinaClassifica = (classifica) => Object.entries(classifica ?? {})
+  .map(([uid, r]) => ({ uid, ...r }))
+  .sort((a, b) => b.punti - a.punti || b.vinte - a.vinte || a.nome.localeCompare(b.nome));
