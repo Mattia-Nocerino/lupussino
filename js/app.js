@@ -533,11 +533,11 @@ function render() {
 }
 
 const vistaLogin = () => `
-  <section class="panel stack" style="text-align:center">
-    <p>Da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.</p>
+  <section class="login">
     <button class="primary full" data-action="login">Entra con Google</button>
+    <p class="oppure">oppure</p>
     <button class="full" data-action="ospite">Entra come ospite</button>
-    <p class="muted">Gli ospiti non finiscono in classifica e perdono il profilo se cancellano i dati del browser.</p>
+    <p class="nota">Da ospite non entri in classifica (puoi collegare Google dopo) e perdi il profilo se cancelli i dati del browser.</p>
   </section>
   <p class="discreto"><button class="link" data-action="rete-apri">📴 Senza internet? Gioca senza account</button></p>
   ${linkRegole()}`;

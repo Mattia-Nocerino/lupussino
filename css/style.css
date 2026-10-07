@@ -198,3 +198,16 @@ dialog.regole p { font-size: .9rem; }
 .timer.scaduto { border-color: var(--panel-2); color: var(--muted); }
 @keyframes timer-pulsa { 50% { box-shadow: 0 0 0 4px rgba(229, 83, 75, .18); } }
 @media (prefers-reduced-motion: reduce) { .timer.ultimi { animation: none; } }
+
+/* Edizione sempre sotto il titolo, piccola */
+.topbar h1 { display: flex; flex-direction: column; line-height: 1.1; }
+.edizione { margin: 2px 0 0 1.9em; font-size: .6rem; }
+
+/* Login al centro dello schermo, con "oppure" tra i due bottoni */
+.login { min-height: 55vh; display: flex; flex-direction: column; justify-content: center; max-width: 340px; margin: 0 auto; }
+.oppure { text-align: center; color: var(--muted); font-size: .8rem; margin: 10px 0; display: flex; align-items: center; gap: 10px; }
+.oppure::before, .oppure::after { content: ''; flex: 1; height: 1px; background: var(--panel-2); }
+.nota { text-align: center; color: var(--muted); font-size: .7rem; margin-top: 14px; opacity: .8; }
+
+/* Link in fondo alla pagina: discreti, senza sottolineatura */
+.discreto button.link { text-decoration: none; }
