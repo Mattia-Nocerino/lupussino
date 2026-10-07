@@ -55,6 +55,7 @@ const roomRef = (id = S.roomId) => ref(db, roomPath(id));
 const ora = () => Date.now() + offsetServer;
 const sonoHost = () => S.room?.hostUid === S.user?.uid;
 const online = (uid) => S.room?.players?.[uid]?.online !== false;
+const stileRuolo = (ruolo) => (G.COLORI[ruolo] ? `--bg:${G.COLORI[ruolo].bg};--fg:${G.COLORI[ruolo].fg}` : '');
 const nomeDi = (uid) => (uid === G.CIELO ? '☁️ Cielo' : S.room?.inGioco?.[uid] ?? S.room?.players?.[uid]?.nome ?? 'giocatore uscito');
 
 function toast(msg) {
@@ -271,6 +272,7 @@ async function avviaPartita() {
     [`${roomPath()}/status`]: 'playing',
     [`${roomPath()}/round`]: round,
     [`${roomPath()}/inGioco`]: nomi,
+    [`${roomPath()}/nGiocatori`]: uids.length, // il mazzo del round resta questo anche se poi qualcuno viene rimosso
     [`${roomPath()}/voted`]: null,
     [`${roomPath()}/result`]: null,
   };
@@ -357,6 +359,7 @@ function render() {
   if (!S.room) return ($app.innerHTML = vistaHome());
   const viste = { lobby: vistaLobby, playing: vistaPartita, ended: vistaRisultato };
   $app.innerHTML = viste[S.room.status]?.() ?? '';
+  if (S.room.status === 'ended' && S.room.result) festeggia();
 }
 
 const vistaLogin = () => `
@@ -403,7 +406,7 @@ function vistaLobby() {
   const uids = Object.keys(r.players);
   const ok = G.puoIniziare(uids.length);
   return `
-    <h2>${esc(r.name)}</h2>
+    <div class="titolo-riga"><h2>${esc(r.name)}</h2>${bottoneMazzo()}</div>
     <section class="panel">
       <p class="muted">Giocatori ${uids.length}/${G.MAX_GIOCATORI} · carte in gioco ${uids.length + G.CARTE_EXTRA}</p>
       ${listaGiocatori()}
@@ -427,7 +430,7 @@ function vistaPartita() {
     : S.coperta
       ? '<div class="carta coperta" data-action="gira"><div>🂠</div><div>Tocca per vedere la tua carta</div></div>'
       : `<div class="carta scoperta ${m.squadra}" data-action="gira">
-          <div class="ruolo">${esc(m.ruolo)}</div>
+          <div class="ruolo pill grande" style="${stileRuolo(m.ruolo)}">${esc(m.ruolo)}</div>
           <div class="squadra">${m.squadra}</div>
           <div>${esc(m.info)}</div>
           <p class="muted" style="margin-top:16px">Tocca per coprire</p>
@@ -444,7 +447,7 @@ function vistaPartita() {
       </div>`;
 
   return `
-    <h2>${esc(r.name)} · round ${r.round}</h2>
+    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
     ${carta}
     <h2>Vota</h2>
     <section class="panel stack">
@@ -458,27 +461,86 @@ function vistaRisultato() {
   const r = S.room;
   const res = r.result;
   if (!res) return '<p class="muted">Calcolo del risultato…</p>';
+  // Una riga per giocatore: pillola col colore del suo ruolo → pillola del giocatore votato.
+  const pillola = (uid) => {
+    if (uid === G.CIELO) return '<span class="pill cielo">☁️ Cielo</span>';
+    const ruolo = res.ruoli?.[uid];
+    return `<span class="pill" style="${stileRuolo(ruolo)}">${esc(nomeDi(uid))}</span>`;
+  };
   const righe = Object.keys(res.ruoli ?? {}).map((u) => {
-    const ruolo = res.ruoli[u];
-    const squadra = G.squadraDi(ruolo);
     const esito = res.dettaglio?.[u];
     const segno = esito === true ? '<span class="ok">✓</span>' : esito === false ? '<span class="ko">✗</span>' : '';
-    return `<li><div>${(res.vincitori ?? []).includes(u) ? '🏆 ' : ''}<strong>${esc(nomeDi(u))}</strong>
-        <span class="${squadra === G.BUONI ? 'ok' : 'ko'}">${esc(ruolo)}</span><br>
-        <span class="muted">ha votato ${esc(nomeDi(res.voti?.[u]))}</span></div>${segno}</li>`;
+    const coppa = Object.values(res.vincitori ?? {}).includes(u) ? '🏆' : '';
+    return `<li class="voto-riga">
+        <div class="voto-chi">${pillola(u)}<small>${coppa} ${esc(res.ruoli[u])}</small></div>
+        <span class="freccia">➜</span>
+        <div class="voto-chi">${res.voti?.[u] ? pillola(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>
+        <span class="segno">${segno}</span></li>`;
   }).join('');
   return `
-    <h2>${esc(r.name)} · round ${r.round}</h2>
+    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
     <div class="banner ${res.vincitore}">${res.vincitore === G.PAREGGIO ? 'Pareggio: non vince nessuno' : `Vincono i ${res.vincitore}!`}</div>
     <p class="muted" style="text-align:center">Voti dei buoni: ${res.giusti} giusti, ${res.sbagliati} sbagliati${res.votiMitomane ? ` (di cui ${res.votiMitomane} al Mitomane)` : ''}</p>
     <section class="panel"><ul class="list">${righe}</ul></section>
     ${Object.values(res.ruoli ?? {}).some(G.isAssassino) ? '' : '<p class="muted" style="text-align:center">Non c\'erano assassini in gioco: il voto giusto era il cielo.</p>'}
-    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map(esc).join(', ')}</p>
+    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => `<span class="pill piccola" style="${stileRuolo(c)}">${esc(c)}</span>`).join(' ')}</p>
     ${sonoHost()
     ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
     : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
     ${pannelloGiocatori()}
     <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+}
+
+// Mazzo del round (o quello che uscirebbe col numero attuale di giocatori), raggruppato per ruolo.
+function bottoneMazzo() {
+  return '<button class="mazzo-btn" data-action="mazzo">🃏 Carte in gioco</button>';
+}
+
+function apriMazzo() {
+  const r = S.room;
+  const n = r.status === 'lobby' ? Object.keys(r.players ?? {}).length : (r.nGiocatori ?? Object.keys(r.inGioco ?? {}).length);
+  const mazzo = G.CONFIGURAZIONI[n];
+  const conta = {};
+  for (const c of mazzo ?? []) conta[c] = (conta[c] ?? 0) + 1;
+  const righe = Object.entries(conta).map(([ruolo, k]) => `<li>
+      <span class="pill" style="${stileRuolo(ruolo)}">${esc(ruolo)}</span>
+      <span class="${G.squadraDi(ruolo) === G.BUONI ? 'ok' : 'ko'}">${k > 1 ? `×${k} · ` : ''}${G.squadraDi(ruolo)}</span></li>`).join('');
+  const titolo = r.status === 'lobby' ? `Con ${n} giocatori il mazzo sarebbe` : `Mazzo di questo round (${n} giocatori)`;
+  const $d = document.createElement('dialog');
+  $d.className = 'mazzo';
+  $d.innerHTML = mazzo
+    ? `<h2>${titolo}</h2><ul class="list">${righe}</ul>
+       <p class="muted">${mazzo.length} carte: una a testa e ${G.CARTE_EXTRA} scartate a caso, quindi qualche ruolo potrebbe non essere in gioco.</p>
+       <button class="primary full" data-chiudi>Chiudi</button>`
+    : `<p>Servono da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.</p><button class="full" data-chiudi>Chiudi</button>`;
+  $d.addEventListener('click', (e) => { if (e.target === $d || e.target.closest('[data-chiudi]')) $d.close(); });
+  $d.addEventListener('close', () => $d.remove());
+  document.body.append($d);
+  $d.showModal();
+}
+
+// Animazione a schermo intero sulla squadra vincente, una volta per round.
+function festeggia() {
+  const chiave = `${S.roomId}/${S.room.round}`;
+  if (festeggia.fatto === chiave) return;
+  festeggia.fatto = chiave;
+  const { vincitore } = S.room.result;
+  const testi = {
+    [G.BUONI]: ['Vincono i buoni!', '⚖️'],
+    [G.CATTIVI]: ['Vincono i cattivi!', '🔪'],
+    [G.PAREGGIO]: ['Pareggio!', '🤝'],
+  };
+  const [testo, emoji] = testi[vincitore] ?? ['Fine partita', '🎲'];
+  const io = Object.values(S.room.result.vincitori ?? {}).includes(S.user.uid);
+  const sotto = vincitore === G.PAREGGIO ? 'Non vince nessuno' : io ? 'Hai vinto 🎉' : 'Hai perso';
+  const $festa = document.createElement('div');
+  $festa.className = `festa ${vincitore}`;
+  const pioggia = Array.from({ length: 24 }, () =>
+    `<span class="goccia" style="left:${Math.random() * 100}%;animation-delay:${(Math.random() * 0.8).toFixed(2)}s">${emoji}</span>`).join('');
+  $festa.innerHTML = `${pioggia}<div class="festa-testo"><div class="festa-emoji">${emoji}</div>${testo}<small>${sotto}</small></div>`;
+  $festa.addEventListener('click', () => $festa.remove());
+  $festa.addEventListener('animationend', (e) => { if (e.target === $festa) $festa.remove(); });
+  document.body.append($festa);
 }
 
 // ---------- eventi ----------
@@ -496,6 +558,7 @@ document.addEventListener('click', (e) => {
     rimuovi: () => tenta(() => rimuoviGiocatore(uid)),
     avvia: () => tenta(avviaPartita),
     gira: () => { S.coperta = !S.coperta; render(); },
+    mazzo: apriMazzo,
     vota: () => tenta(() => vota(uid)),
     nuova: () => tenta(nuovaPartita),
   };

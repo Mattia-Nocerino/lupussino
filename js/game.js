@@ -21,6 +21,18 @@ export const RUOLI = {
   Mitomane: { squadra: CATTIVI },
 };
 
+// Colore di ogni ruolo (sfondo e testo leggibile sopra), come nella vecchia app.
+export const COLORI = {
+  Cittadino: { bg: '#1f6b3a', fg: '#ffffff' },      // verde scuro
+  Cittadina: { bg: '#8fdc6a', fg: '#0f2408' },      // verde chiaro
+  Investigatore: { bg: '#2f6fde', fg: '#ffffff' },  // blu
+  Investigatrice: { bg: '#f39ac7', fg: '#2b0a1b' }, // rosa
+  Assassino: { bg: '#d63a3a', fg: '#ffffff' },      // rosso
+  Mitomane: { bg: '#0a0a0a', fg: '#ffffff' },       // nero
+  Avvocato: { bg: '#ffffff', fg: '#111111' },       // bianco
+  Testimone: { bg: '#86d4f5', fg: '#08222e' },      // celeste
+};
+
 // Chiave = numero di giocatori, valore = mazzo (sempre giocatori + 3 carte).
 export const CONFIGURAZIONI = {
   3: ['Cittadino', 'Testimone', 'Testimone', 'Assassino', 'Mitomane', 'Investigatore'],
