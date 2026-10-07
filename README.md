@@ -10,6 +10,9 @@ si pubblica su GitHub Pages e basta.
 | `index.html`, `css/style.css` | pagina e stile (mobile first) |
 | `js/game.js` | logica pura: configurazioni, distribuzione, informazioni per ruolo, calcolo del vincitore |
 | `js/app.js` | interfaccia, login, stanze, partita in tempo reale sul Realtime Database, presenza online |
+| `js/rete.js`, `js/dati.js`, `js/p2p.js` | stanza senza internet con più telefoni: il telefono del capo fa da database, collegamento WebRTC via QR |
+| `vendor/` | librerie QR (qrcode-generator MIT, jsQR Apache-2.0) |
+| `prova-rete.html` | pagina per provare se i telefoni si collegano tra loro senza internet |
 | `js/offline.js` | archivio sul telefono per giocare senza campo: amici, storico, partite da caricare |
 | `sw.js`, `manifest.webmanifest`, `icons/` | app installabile (PWA) che si apre anche senza internet |
 | `js/firebase-config.js` | **da compilare** con la config del tuo progetto Firebase |
@@ -68,14 +71,32 @@ Scelta consapevole: senza backend il capo stanza "fa da server", quindi con gli 
 
 Limite noto: le regole del Realtime Database non sanno contare i figli di un nodo, quindi il massimo di 9 giocatori per stanza è controllato dall'app e non dalle regole.
 
-## Senza campo
+## Senza internet
 
-1. Apri il sito **almeno una volta con internet** (meglio se fai anche il login): il service worker salva i file sul telefono.
-2. Installala: Android/Chrome menu ⋮ → **Installa app**; iPhone/Safari Condividi → **Aggiungi alla schermata Home**.
-3. Senza campo apri l'app e premi **📴 Partita senza campo**: un solo telefono che passa di mano.
-   Ognuno preme "Sono X" per vedere la propria carta, poi si discute e si vota allo stesso modo, di nascosto.
-4. Le partite finite restano sul telefono (`localStorage`) e vengono scritte in `games/` appena torna internet,
-   con il login del proprietario del telefono come `hostUid`. Gli amici già visti online contano in classifica;
-   i nomi nuovi aggiunti al momento sono ospiti.
+Prima volta: aprire il sito **con internet** (meglio col login) e installarlo: Android/Chrome menu ⋮ → **Installa app**;
+iPhone/Safari Condividi → **Aggiungi alla schermata Home**. Il service worker salva i file e da lì l'app si apre anche senza rete.
 
-Le classifiche senza campo si calcolano con le partite salvate sul telefono.
+### 📡 Ognuno col suo telefono
+1. Un telefono accende l'**hotspot** (non servono giga) e gli altri si collegano a quella rete.
+2. Uno preme **👑 Creo la stanza**: la stanza vive sul suo telefono, che fa le veci del Realtime Database.
+3. Gli altri premono **📷 Mi unisco**: mostrano un QR al capo, poi inquadrano il QR del capo. Da lì lobby, carte, voto,
+   risultato, mazzo, curiosità e rimozione giocatori sono quelli dell'online.
+4. Chi cade (schermo spento, app chiusa) preme **Ricollegati** e rifà i due QR: ritrova carta e voto.
+   Se cade il capo, riapre l'app, va su 📡 e preme **Riprendi la stanza**; gli altri si ricollegano.
+
+Come funziona: WebRTC DataChannel sulla rete locale, senza server. Il QR contiene solo l'essenziale dell'offerta
+WebRTC (~100 caratteri). Il capo manda a ciascuno solo quello che le regole del database gli farebbero leggere
+(la stanza, la propria carta, il proprio voto) e controlla le scritture con le stesse regole. Senza internet nessuno
+subentra al capo.
+
+Se non si collega: tutti sulla stessa rete? Alcuni Android hanno "isola i dispositivi" nell'hotspot; su iPhone serve il
+permesso Impostazioni → Privacy → Rete locale per il browser. `prova-rete.html` mostra una diagnostica.
+
+### 📴 Un solo telefono
+Il telefono passa di mano: ognuno preme "Sono X" per vedere la propria carta, poi si discute e si vota allo stesso modo, di nascosto.
+
+### Sincronizzazione
+Le partite finite senza internet (su un solo telefono o sul telefono del capo) restano in `localStorage` e vengono
+scritte in `games/` appena torna internet, con il login del proprietario del telefono come `hostUid`.
+Gli amici già visti online contano in classifica; i nomi nuovi sono ospiti. Senza rete le classifiche si calcolano
+con le partite salvate sul telefono.

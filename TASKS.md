@@ -38,7 +38,9 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ✅ Modalità "un solo telefono": il telefono passa di mano, ognuno guarda la sua carta e vota di nascosto; nessuna rete necessaria
 - ✅ Partite senza campo salvate sul telefono e caricate in `games/` al ritorno di internet (contano per classifiche e curiosità)
 - ⬜ Schermo sempre acceso durante la partita (Wake Lock)
-- ❓ Alternativa multi-telefono: hotspot di un telefono + collegamento diretto WebRTC con QR code (complesso, da valutare)
+- ✅ Più telefoni senza internet: hotspot + WebRTC con QR, il telefono del capo fa da database (stesse schermate dell'online)
+- ⬜ Provare su telefoni veri: iPhone capo, Android capo, misto (vedi `prova-rete.html`)
+- ⬜ Web NFC su Android per collegarsi avvicinando i telefoni invece dei QR (extra)
 
 ## Fase 4: punteggi, moltiplicatori e bonus (proposte da scegliere)
 Base proposta: chi vince prende **10 punti**, chi perde 0.

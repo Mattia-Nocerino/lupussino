@@ -6,19 +6,22 @@ import {
 import {
   getDatabase, ref, get, set, update, remove, push, onValue, onDisconnect, runTransaction,
   query, orderByChild, limitToLast, serverTimestamp, connectDatabaseEmulator,
-} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js';
+} from './dati.js';
 import { firebaseConfig } from './firebase-config.js';
 import * as G from './game.js';
 import * as O from './offline.js';
+import * as P from './p2p.js';
+import { Capo, Ospite } from './rete.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getDatabase(app);
+const dbFirebase = getDatabase(app);
+let db = dbFirebase; // nella stanza senza internet diventa il telefono del capo (rete.js)
 
 // Sviluppo locale: apri la pagina con ?emulatori per usare gli emulatori Firebase invece del progetto vero.
 if (new URLSearchParams(location.search).has('emulatori')) {
   connectAuthEmulator(auth, `http://${location.hostname}:9099`, { disableWarnings: true });
-  connectDatabaseEmulator(db, location.hostname, 9000);
+  connectDatabaseEmulator(dbFirebase, location.hostname, 9000);
 }
 
 const $app = document.getElementById('app');
@@ -46,7 +49,7 @@ let unsubStanze = null;
 let unsubRoom = null;
 let unsubConnessione = null;
 let offsetServer = 0; // differenza tra l'orologio del server e quello del telefono
-onValue(ref(db, '.info/serverTimeOffset'), (snap) => { offsetServer = snap.val() ?? 0; });
+onValue(ref(dbFirebase, '.info/serverTimeOffset'), (snap) => { offsetServer = snap.val() ?? 0; });
 
 // Presenza: il server segna "online: false" da solo quando un telefono si disconnette (onDisconnect).
 // Dopo questo margine senza capo stanza, il primo giocatore online prende il suo posto.
@@ -77,6 +80,7 @@ async function tenta(fn) {
 // ---------- auth ----------
 
 onAuthStateChanged(auth, async (user) => {
+  if (S.rete) return; // nella stanza senza internet resta l'identità con cui si è entrati
   S.user = user;
   if (!user) {
     unsubStanze?.(); unsubRoom?.(); unsubConnessione?.();
@@ -85,7 +89,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   S.nome = localStorage.getItem('lupussino.nome') || user.displayName || `Ospite ${user.uid.slice(0, 4)}`;
   render(); // senza campo le operazioni sotto restano in attesa: intanto la pagina deve funzionare
-  tenta(() => update(ref(db, `users/${user.uid}`), { nome: S.nome, ultimoAccesso: serverTimestamp() }));
+  tenta(() => update(ref(dbFirebase, `users/${user.uid}`), { nome: S.nome, ultimoAccesso: serverTimestamp() }));
   ascoltaStanze();
   const salvata = localStorage.getItem('lupussino.room');
   if (salvata && navigator.onLine) await tenta(() => entraInStanza(salvata, { soloSeGiaDentro: true }));
@@ -112,7 +116,7 @@ async function salvaNome(nome) {
   if (!nome) return;
   S.nome = nome;
   localStorage.setItem('lupussino.nome', nome);
-  await update(ref(db, `users/${S.user.uid}`), { nome });
+  await update(ref(dbFirebase, `users/${S.user.uid}`), { nome });
   toast('Nome salvato');
 }
 
@@ -206,6 +210,7 @@ function lasciaLocalmente() {
   clearTimeout(controllaCapo.timer);
   localStorage.removeItem('lupussino.room');
   Object.assign(S, { roomId: null, room: null, mano: null, manoRound: null, mioVoto: null });
+  if (S.rete) chiudiRete();
   render();
 }
 
@@ -215,6 +220,11 @@ async function esciDallaStanza() {
   if (room.status === 'playing' && room.inGioco?.[uid]) {
     if (!confirm('La partita è in corso: se esci gli altri non potranno finire il voto. Uscire comunque?')) return;
     return lasciaLocalmente(); // resti tra i giocatori del round: potrai rientrare dalla stessa pagina
+  }
+  if (S.rete?.capo) {
+    if (Object.keys(room.players).length > 1 && !confirm('Senza internet la stanza vive sul tuo telefono: se esci si chiude per tutti. Chiudere?')) return;
+    await remove(roomRef()); // gli altri vedono la stanza sparire ed escono
+    return lasciaLocalmente();
   }
   await disattivaPresenza();
   const altri = Object.keys(room.players).filter((u) => u !== uid);
@@ -238,6 +248,7 @@ async function rimuoviGiocatore(uid) {
   const modifiche = { [`players/${uid}`]: null };
   if (inGioco) Object.assign(modifiche, { [`inGioco/${uid}`]: null, [`voted/${uid}`]: null });
   await update(roomRef(), modifiche);
+  S.rete?.capo?.scollega(uid);
 }
 
 // Se il capo stanza risulta offline da più di MARGINE_CAPO_MS, il primo giocatore online
@@ -245,7 +256,7 @@ async function rimuoviGiocatore(uid) {
 async function controllaCapo() {
   clearTimeout(controllaCapo.timer);
   const r = S.room;
-  if (!r || !S.user || sonoHost()) return;
+  if (!r || !S.user || sonoHost() || S.rete) return;
   const capo = r.players?.[r.hostUid];
   if (capo && capo.online !== false) return;
   const candidati = Object.keys(r.players).filter((u) => u !== r.hostUid && online(u)).sort();
@@ -361,11 +372,12 @@ async function calcolaRisultato() {
     const storico = await leggiPartite().catch(() => []);
     const result = { ...partita, fatti: G.curiosita(partita, storico) };
 
-    await update(ref(db), {
-      [`${roomPath()}/status`]: 'ended',
-      [`${roomPath()}/result`]: result,
-      [`games/${S.roomId}_${round}`]: { roomId: S.roomId, round, hostUid: S.user.uid, ...partita, finitaIl: serverTimestamp() },
-    });
+    const modifiche = { [`${roomPath()}/status`]: 'ended', [`${roomPath()}/result`]: result };
+    const storia = { roomId: S.roomId, round, hostUid: S.user.uid, ...partita };
+    // senza internet la partita resta sul telefono del capo e va in games/ quando torna la rete
+    if (S.rete) O.accoda(`${S.roomId}_${round}`, { ...storia, offline: true });
+    else modifiche[`games/${S.roomId}_${round}`] = { ...storia, finitaIl: serverTimestamp() };
+    await update(ref(db), modifiche);
   } catch (e) {
     console.error(e); toast(e.message);
   } finally {
@@ -375,7 +387,8 @@ async function calcolaRisultato() {
 
 // Storico partite (base di classifiche e curiosità). Con pochi amici restano poche migliaia di righe.
 async function leggiPartite() {
-  const snap = await get(query(ref(db, 'games'), orderByChild('finitaIl'), limitToLast(2000)));
+  if (S.rete) return O.storico();
+  const snap = await get(query(ref(dbFirebase, 'games'), orderByChild('finitaIl'), limitToLast(2000)));
   const partite = [];
   snap.forEach((c) => { partite.push(c.val()); });
   return partite;
@@ -409,14 +422,16 @@ function render() {
     if (S.off.fase === 'fine') festeggia(S.off.id, S.off.result, nomiVincitori(S.off.result, (u) => S.off.giocatori[u]));
     return;
   }
-  $utente.innerHTML = S.user
-    ? `<span>${esc(S.nome)}</span><button class="link" data-action="logout">Esci</button>`
-    : '';
+  $utente.innerHTML = S.rete ? `<span>📡 ${esc(S.nome)} · senza internet</span>`
+    : S.user ? `<span>${esc(S.nome)}</span><button class="link" data-action="logout">Esci</button>`
+      : '';
+  if (S.rete && !S.room) return ($app.innerHTML = vistaRete());
+  if (S.vista === 'rete') return ($app.innerHTML = vistaRete());
   if (!S.user) return ($app.innerHTML = vistaLogin());
   if (!S.room && S.vista === 'classifica') return ($app.innerHTML = vistaClassifica());
   if (!S.room) return ($app.innerHTML = vistaHome());
   const viste = { lobby: vistaLobby, playing: vistaPartita, ended: vistaRisultato };
-  $app.innerHTML = viste[S.room.status]?.() ?? '';
+  $app.innerHTML = avvisoRete() + (viste[S.room.status]?.() ?? '');
   if (S.room.status === 'ended' && S.room.result) {
     const io = Object.values(S.room.result.vincitori ?? {}).includes(S.user.uid);
     festeggia(`${S.roomId}/${S.room.round}`, S.room.result, S.room.result.vincitore === G.PAREGGIO ? 'Non vince nessuno' : io ? 'Hai vinto 🎉' : 'Hai perso');
@@ -497,6 +512,7 @@ function vistaLobby() {
       <p class="muted">Giocatori ${uids.length}/${G.MAX_GIOCATORI} · carte in gioco ${uids.length + G.CARTE_EXTRA}</p>
       ${listaGiocatori()}
     </section>
+    ${bottoneTelefoni()}
     ${sonoHost()
     ? `<button class="primary full" data-action="avvia" ${ok ? '' : 'disabled'}>Avvia partita</button>
        ${ok ? '' : `<p class="muted">Servono almeno ${G.MIN_GIOCATORI} giocatori.</p>`}`
@@ -543,7 +559,8 @@ function vistaPartita() {
       ${voto}
       <p class="muted">Hanno votato ${votanti}/${uids.length}${mancano ? ` · mancano: ${mancano}` : ''}</p>
     </section>
-    ${pannelloGiocatori()}`;
+    ${pannelloGiocatori()}
+    ${bottoneTelefoni()}`;
 }
 
 function vistaRisultato() {
@@ -557,6 +574,7 @@ function vistaRisultato() {
     ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
     : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
     ${pannelloGiocatori()}
+    ${bottoneTelefoni()}
     <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
 }
 
@@ -647,7 +665,8 @@ function festeggia(chiave, result, sotto) {
 // Niente rete: il telefono mescola, ognuno guarda la sua carta e vota di nascosto, poi il risultato.
 // Le partite finite restano in coda sul telefono e vanno nel database appena torna internet.
 
-const bottoneOffline = () => '<button class="full" data-action="off-apri">📴 Partita senza campo (un solo telefono)</button>';
+const bottoneOffline = () => `<button class="full" data-action="rete-apri">📡 Senza internet, ognuno col suo telefono</button>
+  <button class="full" data-action="off-apri">📴 Senza internet, un solo telefono</button>`;
 const nomiVincitori = (res, nome) => (res.vincitore === G.PAREGGIO ? 'Non vince nessuno'
   : Object.values(res.vincitori ?? {}).map((u) => esc(nome(u))).join(', ') || 'Nessuno a cui dare i punti');
 
@@ -862,16 +881,16 @@ function vistaOffline() {
 // Carica nel database le partite finite senza campo. Parte all'avvio, al ritorno della rete e a fine partita.
 async function sincronizza() {
   const coda = Object.entries(O.coda());
-  if (sincronizza.attiva || !S.user || !navigator.onLine || !coda.length) return;
+  if (sincronizza.attiva || !S.user || S.user.locale || !navigator.onLine || !coda.length) return;
   sincronizza.attiva = true;
   let fatte = 0;
   try {
     for (const [id, partita] of coda) {
       try {
-        await set(ref(db, `games/${id}`), { ...partita, hostUid: S.user.uid });
+        await set(ref(dbFirebase, `games/${id}`), { ...partita, hostUid: S.user.uid });
       } catch (e) {
         // già caricata da un tentativo precedente (le regole permettono una sola scrittura)? allora è a posto
-        if (!(await get(ref(db, `games/${id}`)).catch(() => null))?.exists()) { console.warn('sincronizzazione', id, e); continue; }
+        if (!(await get(ref(dbFirebase, `games/${id}`)).catch(() => null))?.exists()) { console.warn('sincronizzazione', id, e); continue; }
       }
       O.togliDallaCoda(id);
       fatte++;
@@ -890,6 +909,191 @@ window.addEventListener('offline', () => render());
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker', e));
+}
+
+// ---------- senza internet, ognuno col suo telefono ----------
+// Hotspot (o Wi-Fi senza connessione) + WebRTC: il telefono del capo tiene la stanza (rete.js)
+// e gli altri si collegano inquadrando due QR. Le schermate di gioco sono le stesse dell'online.
+
+// Chi non ha mai fatto il login usa un'identità locale, fissa su questo telefono.
+function identitaLocale() {
+  if (S.user) return;
+  let id = localStorage.getItem('lupussino.idLocale');
+  if (!id) { id = O.nuovoId('locale'); localStorage.setItem('lupussino.idLocale', id); }
+  S.user = { uid: id, isAnonymous: true, locale: true };
+}
+
+function preparaNome(nome) {
+  nome = String(nome ?? '').trim().slice(0, 20);
+  if (!nome) throw new Error('Scrivi il tuo nome.');
+  S.nome = nome;
+  localStorage.setItem('lupussino.nome', nome);
+  identitaLocale();
+}
+
+function vistaRete() {
+  const salvata = Capo.salvato();
+  return `
+    <div class="titolo-riga"><h2>📡 Senza internet</h2><button class="mazzo-btn" data-action="rete-indietro">← Indietro</button></div>
+    <section class="panel stack">
+      <p>1. Un telefono accende l'<strong>hotspot</strong> (servono zero giga) e gli altri si collegano a quella rete Wi-Fi.</p>
+      <p>2. Uno crea la stanza e fa da capo: la partita vive sul suo telefono.</p>
+      <p>3. Gli altri premono "Mi unisco" e si scambiano due QR col capo.</p>
+    </section>
+    <form data-form="rete" class="panel stack">
+      <label class="muted" for="nome-rete">Il tuo nome</label>
+      <input id="nome-rete" name="nome" value="${esc(S.nome)}" maxlength="20" required>
+      <button class="primary full" name="come" value="capo">👑 Creo la stanza</button>
+      <button class="full" name="come" value="ospite">📷 Mi unisco</button>
+    </form>
+    ${salvata?.roomId ? '<button class="full" data-action="rete-riprendi">↩️ Riprendi la stanza senza internet di prima</button>' : ''}
+    <p class="muted">Su iPhone, se il collegamento non parte: Impostazioni → Privacy → Rete locale, e attiva il browser.</p>`;
+}
+
+function bottoneTelefoni() {
+  if (!S.rete?.capo) return '';
+  const n = S.rete.capo.collegati().length;
+  return `<button class="full" data-action="rete-aggiungi">📷 Aggiungi o ricollega un telefono <span class="tag">${n} collegati</span></button>`;
+}
+
+function avvisoRete() {
+  if (S.rete?.ospite?.connesso === false) {
+    return `<section class="panel stack"><p class="ko">Collegamento col capo perso.</p>
+      <button class="primary full" data-action="rete-ricollega">📷 Ricollegati al capo</button></section>`;
+  }
+  return '';
+}
+
+async function schermoAcceso() {
+  try { S.rete.wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* non supportato */ }
+}
+
+function chiudiRete() {
+  const r = S.rete;
+  S.rete = null;
+  r.capo?.chiudi();
+  r.ospite?.chiudi();
+  r.wakeLock?.release?.().catch?.(() => {});
+  chiudiDialogo();
+  db = dbFirebase;
+  if (S.user?.locale) S.user = auth.currentUser;
+}
+
+async function creaStanzaRete() {
+  const capo = new Capo({ uid: S.user.uid });
+  S.rete = { capo };
+  db = capo;
+  capo.alCambio = () => { const $b = document.querySelector('[data-action="rete-aggiungi"] .tag'); if ($b) $b.textContent = `${capo.collegati().length} collegati`; };
+  schermoAcceso();
+  await creaStanza(`Stanza di ${S.nome}`);
+  capo.roomId = S.roomId;
+  capo.salva();
+}
+
+async function riprendiCapo() {
+  const salvata = Capo.salvato();
+  identitaLocale();
+  if (salvata.albero.rooms?.[salvata.roomId]?.hostUid !== S.user.uid) { Capo.dimentica(); throw new Error('Quella stanza era di un altro account.'); }
+  const capo = new Capo({ uid: S.user.uid, albero: salvata.albero, roomId: salvata.roomId });
+  S.rete = { capo };
+  db = capo;
+  capo.alCambio = () => render();
+  schermoAcceso();
+  // nessuno è ancora collegato: tutti offline finché non rientrano col QR
+  const offline = {};
+  for (const uid of Object.keys(salvata.albero.rooms[salvata.roomId].players ?? {})) if (uid !== S.user.uid) offline[`rooms/${salvata.roomId}/players/${uid}/online`] = false;
+  await update(ref(db), offline);
+  osservaStanza(salvata.roomId);
+}
+
+// Finestra sopra il gioco per QR e fotocamera: i render del gioco non la toccano.
+function dialogo(html) {
+  dialogo.scanner?.ferma();
+  let $d = document.querySelector('dialog.rete');
+  if (!$d) {
+    $d = document.createElement('dialog');
+    $d.className = 'mazzo rete';
+    $d.addEventListener('close', () => { dialogo.scanner?.ferma(); $d.remove(); });
+    document.body.append($d);
+    $d.showModal();
+  }
+  $d.innerHTML = `${html}<button class="full" data-action="rete-annulla" style="margin-top:8px">Annulla</button>`;
+  return $d;
+}
+function chiudiDialogo() { document.querySelector('dialog.rete')?.close(); }
+
+const mostraQr = (testo, codice) => `<p>${testo}</p><div class="qr">${P.qrSvg(codice)}</div>
+  <details><summary class="muted">Codice da copiare</summary><code class="codice">${esc(codice)}</code></details>`;
+
+// Legge un QR con la fotocamera (o un codice incollato, per chi non ha fotocamera).
+function inquadra(testo) {
+  dialogo(`<p>${testo}</p><video class="cam" playsinline muted></video>
+    <details><summary class="muted">Non funziona la fotocamera? Incolla il codice</summary>
+    <form data-form="rete-codice"><textarea name="codice" rows="3"></textarea><button class="full">Usa il codice</button></form></details>`);
+  return new Promise((ok, no) => {
+    dialogo.codice = ok;
+    dialogo.scanner = P.leggiQr(document.querySelector('dialog.rete video'));
+    dialogo.scanner.letto.then((c) => c && ok(c), (e) => { console.warn(e); toast('Fotocamera non disponibile: incolla il codice.'); });
+    document.querySelector('dialog.rete').addEventListener('close', () => no(new Error('annullato')), { once: true });
+  });
+}
+
+const aperto = (canale, ms = 15000) => new Promise((ok, no) => {
+  if (canale.readyState === 'open') return ok();
+  const t = setTimeout(() => no(new Error('Collegamento non riuscito. Siete sulla stessa rete Wi-Fi o hotspot?')), ms);
+  canale.addEventListener('open', () => { clearTimeout(t); ok(); }, { once: true });
+});
+
+// Capo: inquadra il QR del nuovo telefono, mostra il proprio, e il canale passa a rete.js.
+async function aggiungiTelefono() {
+  try {
+    const offerta = await inquadra('Inquadra il QR sul telefono di chi entra.');
+    dialogo('<p class="muted">Preparo la risposta…</p>');
+    const r = await P.rispondi(offerta);
+    dialogo(mostraQr('Ora fai inquadrare questo QR all\'altro telefono.', r.codice));
+    const canale = await r.canale;
+    S.rete?.capo?.collega(canale);
+    await aperto(canale);
+    chiudiDialogo();
+    toast('Telefono collegato ✅');
+  } catch (e) {
+    if (e.message !== 'annullato') { chiudiDialogo(); toast(e.message); }
+  }
+}
+
+// Ospite: mostra il proprio QR, inquadra quello del capo, poi entra nella stanza come online.
+async function uniscitiRete() {
+  if (!S.rete) S.rete = {};
+  schermoAcceso();
+  try {
+    dialogo('<p class="muted">Preparo il QR…</p>');
+    // con la fotocamera autorizzata alcuni browser usano l'indirizzo vero, che collega meglio
+    try { (await navigator.mediaDevices.getUserMedia({ video: true })).getTracks().forEach((t) => t.stop()); } catch { /* pazienza */ }
+    const o = await P.creaOfferta();
+    dialogo(`${mostraQr('1. Fai inquadrare questo QR al capo.', o.codice)}
+      <button class="primary full" data-action="rete-leggi-capo">2. Fatto: inquadra il QR del capo</button>`);
+    await new Promise((ok, no) => {
+      dialogo.avanti = ok;
+      document.querySelector('dialog.rete').addEventListener('close', () => no(new Error('annullato')), { once: true });
+    });
+    const risposta = await inquadra('Inquadra il QR sul telefono del capo.');
+    dialogo('<p class="muted">Mi collego…</p>');
+    await o.accettaRisposta(risposta);
+    await aperto(o.canale);
+    if (!S.rete) return o.canale.close();
+    S.rete.ospite?.chiudi();
+    const ospite = new Ospite(o.canale, S.user.uid);
+    S.rete.ospite = ospite;
+    db = ospite;
+    ospite.alChiusura = () => { if (S.rete?.ospite === ospite) render(); };
+    const { roomId } = await ospite.benvenuto;
+    chiudiDialogo();
+    await entraInStanza(roomId);
+    render();
+  } catch (e) {
+    if (e.message !== 'annullato') { chiudiDialogo(); toast(e.message); }
+    if (!S.rete?.ospite) { S.rete = null; render(); }
+  }
 }
 
 // ---------- eventi ----------
@@ -914,6 +1118,13 @@ document.addEventListener('click', (e) => {
     indietro: () => { S.vista = null; render(); },
     nuova: () => tenta(nuovaPartita),
     'off-apri': apriOffline,
+    'rete-apri': () => { S.vista = 'rete'; render(); },
+    'rete-indietro': () => { S.vista = null; if (S.rete && !S.room) chiudiRete(); render(); },
+    'rete-riprendi': () => { S.vista = null; tenta(riprendiCapo); },
+    'rete-aggiungi': aggiungiTelefono,
+    'rete-ricollega': uniscitiRete,
+    'rete-leggi-capo': () => dialogo.avanti?.(),
+    'rete-annulla': chiudiDialogo,
     'off-chiudi': chiudiOffline,
     'off-aggiungi': () => aggiungiOff(uid, nome),
     'off-togli': () => togliOff(uid),
@@ -938,10 +1149,21 @@ document.addEventListener('submit', (e) => {
   if (form.dataset.form === 'nome') tenta(() => salvaNome(valore));
   if (form.dataset.form === 'crea') tenta(() => creaStanza(valore));
   if (form.dataset.form === 'off-nuovo') aggiungiOff(null, valore);
+  if (form.dataset.form === 'rete-codice') dialogo.codice?.(String(new FormData(form).get('codice') ?? '').trim());
+  if (form.dataset.form === 'rete') {
+    const come = e.submitter?.value ?? 'ospite';
+    tenta(async () => {
+      preparaNome(valore);
+      S.vista = null;
+      if (come === 'capo') await creaStanzaRete();
+      else await uniscitiRete();
+    });
+  }
 });
 
 // Se il telefono va in background o si cambia app, la carta si ricopre da sola.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && !S.coperta) { S.coperta = true; render(); }
   if (document.hidden && S.off?.mostra) { S.off.mostra = false; salvaOff(); }
+  if (!document.hidden && S.rete) schermoAcceso(); // il blocco schermo acceso si perde quando cambi app
 });
