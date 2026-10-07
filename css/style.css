@@ -89,13 +89,14 @@ ul.list li:last-child { border-bottom: none; }
 details.panel summary { cursor: pointer; color: var(--muted); }
 details.panel[open] summary { margin-bottom: 8px; }
 
-/* Pillole colorate per ruolo (--bg / --fg arrivano da COLORI in game.js) */
+/* Pillole dei ruoli: emoji del ruolo (EMOJI in game.js), verde per i buoni e rosso per i cattivi */
 .pill {
   display: inline-block; padding: 4px 10px; border-radius: 99px; font-weight: 600;
-  background: var(--bg, var(--panel-2)); color: var(--fg, var(--text));
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .25); /* così si vede anche il nero del Mitomane */
+  background: var(--panel-2); color: var(--text); border: 1px solid transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
+.pill.buoni { background: #173a2a; border-color: var(--buoni); }
+.pill.cattivi { background: #3d1717; border-color: var(--cattivi); }
 .pill.grande { font-size: 1.6rem; padding: 6px 18px; margin-bottom: 4px; }
 .pill.piccola { font-size: .8rem; padding: 2px 8px; margin: 2px 0; }
 .pill.cielo { background: linear-gradient(135deg, #cfe9ff, #ffffff); color: #22435c; }

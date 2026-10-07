@@ -63,8 +63,11 @@ const roomRef = (id = S.roomId) => ref(db, roomPath(id));
 const ora = () => Date.now() + offsetServer;
 const sonoHost = () => S.room?.hostUid === S.user?.uid;
 const online = (uid) => S.room?.players?.[uid]?.online !== false;
-const stileRuolo = (ruolo) => (G.COLORI[ruolo] ? `--bg:${G.COLORI[ruolo].bg};--fg:${G.COLORI[ruolo].fg}` : '');
-const nomeDi = (uid) => (uid === G.CIELO ? '☁️ Cielo' : S.room?.inGioco?.[uid] ?? S.room?.players?.[uid]?.nome ?? 'giocatore uscito');
+// Pillola di un ruolo: emoji del ruolo davanti al testo, verde o rossa secondo la squadra.
+const pillola = (ruolo, testo = ruolo, classe = '') => (G.RUOLI[ruolo]
+  ? `<span class="pill ${G.squadraDi(ruolo)} ${classe}">${G.EMOJI[ruolo]} ${esc(testo)}</span>`
+  : `<span class="pill ${classe}">${esc(testo)}</span>`);
+const nomeDi = (uid) => (uid === G.CIELO ? `${G.EMOJI_CIELO} Cielo` : S.room?.inGioco?.[uid] ?? S.room?.players?.[uid]?.nome ?? 'giocatore uscito');
 
 function toast(msg) {
   $toast.textContent = msg;
@@ -532,7 +535,7 @@ function vistaPartita() {
     : S.coperta
       ? '<div class="carta coperta" data-action="gira"><div>🂠</div><div>Tocca per vedere la tua carta</div></div>'
       : `<div class="carta scoperta ${m.squadra}" data-action="gira">
-          <div class="ruolo pill grande" style="${stileRuolo(m.ruolo)}">${esc(m.ruolo)}</div>
+          <div class="ruolo">${pillola(m.ruolo, m.ruolo, 'grande')}</div>
           <div class="squadra">${m.squadra}</div>
           <div>${esc(m.info)}</div>
           <p class="muted" style="margin-top:16px">Tocca per coprire</p>
@@ -546,7 +549,7 @@ function vistaPartita() {
     ? `<p>Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.</p>`
     : `<div class="voti">
         ${uids.filter((u) => u !== S.user.uid).map((u) => bottone(u, esc(r.inGioco[u]))).join('')}
-        ${bottone(G.CIELO, '☁️ Cielo')}
+        ${bottone(G.CIELO, `${G.EMOJI_CIELO} Cielo`)}
       </div>
       <button class="primary full" data-action="conferma" ${S.scelta ? '' : 'disabled'}>
         ${S.scelta ? `Conferma voto: ${esc(nomeDi(S.scelta))}` : 'Scegli chi votare'}</button>`;
@@ -580,20 +583,16 @@ function vistaRisultato() {
 
 // Banner, ruoli e voti di tutti, curiosità e scarti: uguale online e senza campo.
 function tabellaRisultato(res, nomeDi) {
-  // Una riga per giocatore: pillola col colore del suo ruolo → pillola del giocatore votato.
-  const pillola = (uid) => {
-    if (uid === G.CIELO) return '<span class="pill cielo">☁️ Cielo</span>';
-    const ruolo = res.ruoli?.[uid];
-    return `<span class="pill" style="${stileRuolo(ruolo)}">${esc(nomeDi(uid))}</span>`;
-  };
+  // Una riga per giocatore: emoji del suo ruolo e nome → emoji e nome del giocatore votato.
+  const chi = (uid) => (uid === G.CIELO ? `<span class="pill cielo">${G.EMOJI_CIELO} Cielo</span>` : pillola(res.ruoli?.[uid], nomeDi(uid)));
   const righe = Object.keys(res.ruoli ?? {}).map((u) => {
     const esito = res.dettaglio?.[u];
     const segno = esito === true ? '<span class="ok">✓</span>' : esito === false ? '<span class="ko">✗</span>' : '';
     const coppa = Object.values(res.vincitori ?? {}).includes(u) ? '🏆' : '';
     return `<li class="voto-riga">
-        <div class="voto-chi">${pillola(u)}<small>${coppa} ${esc(res.ruoli[u])}</small></div>
+        <div class="voto-chi">${chi(u)}<small>${coppa} ${esc(res.ruoli[u])}</small></div>
         <span class="freccia">➜</span>
-        <div class="voto-chi">${res.voti?.[u] ? pillola(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>
+        <div class="voto-chi">${res.voti?.[u] ? chi(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>
         <span class="segno">${segno}</span></li>`;
   }).join('');
   return `
@@ -602,7 +601,7 @@ function tabellaRisultato(res, nomeDi) {
     <section class="panel"><ul class="list">${righe}</ul></section>
     ${Object.values(res.fatti ?? {}).length ? `<h2>💡 Lo sapevi?</h2><section class="panel"><ul class="fatti">${Object.values(res.fatti).map((f) => `<li>${esc(f)}</li>`).join('')}</ul></section>` : ''}
     ${Object.values(res.ruoli ?? {}).some(G.isAssassino) ? '' : '<p class="muted" style="text-align:center">Non c\'erano assassini in gioco: il voto giusto era il cielo.</p>'}
-    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => `<span class="pill piccola" style="${stileRuolo(c)}">${esc(c)}</span>`).join(' ')}</p>`;
+    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => pillola(c, c, 'piccola')).join(' ')}</p>`;
 }
 
 // Mazzo del round (o quello che uscirebbe col numero attuale di giocatori), raggruppato per ruolo.
@@ -625,7 +624,7 @@ function mostraMazzo(n, titolo) {
   const conta = {};
   for (const c of mazzo ?? []) conta[c] = (conta[c] ?? 0) + 1;
   const righe = Object.entries(conta).map(([ruolo, k]) => `<li>
-      <span class="pill" style="${stileRuolo(ruolo)}">${esc(ruolo)}</span>
+      ${pillola(ruolo)}
       <span class="${G.squadraDi(ruolo) === G.BUONI ? 'ok' : 'ko'}">${k > 1 ? `×${k} · ` : ''}${G.squadraDi(ruolo)}</span></li>`).join('');
   const $d = document.createElement('dialog');
   $d.className = 'mazzo';
@@ -777,13 +776,13 @@ function concludiOff() {
 
 function vistaOffline() {
   const o = S.off;
-  const nome = (u) => (u === G.CIELO ? '☁️ Cielo' : o.giocatori[u] ?? '???');
+  const nome = (u) => (u === G.CIELO ? `${G.EMOJI_CIELO} Cielo` : o.giocatori[u] ?? '???');
   const testa = (titolo) => `<div class="titolo-riga"><h2>${titolo}</h2>${bottoneMazzo()}</div>`;
   const esci = `<p><button class="link" data-action="off-chiudi">${o.fase === 'fine' || o.fase === 'setup' ? 'Torna alla home' : 'Interrompi la partita'}</button></p>`;
   const carta = (u) => {
     const m = o.mani[u];
     return `<div class="carta scoperta ${m.squadra}">
-        <div class="ruolo pill grande" style="${stileRuolo(m.ruolo)}">${esc(m.ruolo)}</div>
+        <div class="ruolo">${pillola(m.ruolo, m.ruolo, 'grande')}</div>
         <div class="squadra">${m.squadra}</div>
         <div>${esc(m.info)}</div>
       </div>`;
@@ -858,7 +857,7 @@ function vistaOffline() {
       <section class="panel stack">
         <div class="voti">
           ${o.ordine.filter((b) => b !== u).map((b) => bottone(b, esc(nome(b)))).join('')}
-          ${bottone(G.CIELO, '☁️ Cielo')}
+          ${bottone(G.CIELO, `${G.EMOJI_CIELO} Cielo`)}
         </div>
         <button class="primary full" data-action="off-conferma" ${o.scelta ? '' : 'disabled'}>
           ${o.scelta ? `Conferma voto: ${esc(nome(o.scelta))}` : 'Scegli chi votare'}</button>
