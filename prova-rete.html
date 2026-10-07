@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14121f">
+  <title>Lupussino · prova rete</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .qr { background: #fff; border-radius: 12px; padding: 8px; max-width: 360px; margin: 0 auto; }
+    .qr svg { display: block; width: 100%; height: auto; }
+    video { width: 100%; border-radius: 12px; background: #000; max-height: 50vh; object-fit: cover; }
+    code, textarea { font-size: .75rem; word-break: break-all; }
+    textarea { width: 100%; min-height: 4em; background: var(--panel-2); color: var(--text); border-radius: 10px; border: 1px solid var(--panel-2); padding: 8px; }
+    #log { font-size: .8rem; color: var(--muted); white-space: pre-wrap; max-height: 30vh; overflow: auto; }
+  </style>
+  <script src="vendor/qrcode.js"></script>
+  <script src="vendor/jsQR.js"></script>
+</head>
+<body>
+  <header class="topbar"><h1>🐺 Prova rete senza internet</h1><div id="stato" class="muted"></div></header>
+  <main id="app"></main>
+  <main><details class="panel"><summary>Diagnostica</summary><div id="log"></div></details></main>
+  <script type="module">
+    import * as P from './js/p2p.js';
+
+    const $app = document.getElementById('app');
+    const $log = document.getElementById('log');
+    const t0 = performance.now();
+    const log = (m) => { $log.textContent += `${((performance.now() - t0) / 1000).toFixed(1)}s ${m}\n`; };
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    log(`${navigator.userAgent}`);
+    log(`online: ${navigator.onLine} · BarcodeDetector: ${'BarcodeDetector' in window}`);
+
+    let ruolo = null;
+    const ospiti = []; // capo: [{ nome, canale, rtt }]
+    let canaleCapo = null; // ospite
+    const messaggi = [];
+    let scanner = null;
+
+    function chiudiScanner() { scanner?.ferma(); scanner = null; }
+
+    // Pagina di scelta
+    function home() {
+      $app.innerHTML = `
+        <section class="panel stack">
+          <p>Accendete l'hotspot su un telefono (anche senza giga) e collegate gli altri a quella rete, oppure usate lo stesso Wi-Fi.
+          Poi un telefono fa il capo e gli altri si uniscono inquadrando i QR.</p>
+          <p class="muted">Per provare davvero l'offline staccate i dati mobili prima di iniziare.</p>
+          <button class="primary full" data-a="capo">Sono il capo</button>
+          <form data-f="ospite" class="row"><input name="nome" placeholder="Il tuo nome" maxlength="20" required><button>Mi unisco</button></form>
+        </section>`;
+    }
+
+    // ---------- capo ----------
+    // Il capo ha tre zone aggiornate separatamente, così ping e messaggi non chiudono fotocamera e QR.
+    function vistaCapo() {
+      $app.innerHTML = `<h2 id="titolo"></h2><section class="panel"><ul class="list" id="lista"></ul></section><div id="pannello"></div>${chat()}`;
+      aggiornaLista();
+      pannello();
+    }
+    function aggiornaLista() {
+      document.getElementById('titolo').textContent = `👑 Capo · ${ospiti.filter((o) => o.canale.readyState === 'open').length} collegati`;
+      document.getElementById('lista').innerHTML = ospiti.map((o) => `<li><span>${esc(o.nome)}</span><span class="muted">${o.canale.readyState === 'open' ? `🟢 ${o.rtt ?? '…'} ms` : '🔴 caduto'}</span></li>`).join('') || '<li class="muted">Nessuno ancora</li>';
+    }
+    function pannello(html = '<button class="primary full" data-a="aggiungi">📷 Aggiungi un telefono</button>') {
+      document.getElementById('pannello').innerHTML = html;
+    }
+
+    async function aggiungi() {
+      pannello(`<section class="panel stack"><p>Inquadra il QR sul telefono di chi si unisce.</p><video id="cam"></video>
+        <details><summary class="muted">Senza fotocamera: incolla il codice</summary><form data-f="incolla-offerta"><textarea name="c"></textarea><button>Usa</button></form></details>
+        <button class="full" data-a="annulla">Annulla</button></section>`);
+      scanner = P.leggiQr(document.getElementById('cam'));
+      try {
+        const codice = await scanner.letto;
+        if (codice) await accettaOfferta(codice);
+      } catch (e) { log(`fotocamera: ${e.message}`); }
+    }
+
+    async function accettaOfferta(codice) {
+      chiudiScanner();
+      log(`offerta letta (${codice.length} car.): ${P.tipiCandidati(codice).join(', ') || 'nessun candidato!'}`);
+      const r = await P.rispondi(codice);
+      log(`risposta pronta (${r.codice.length} car.): ${P.tipiCandidati(r.codice).join(', ') || 'nessun candidato!'}`);
+      r.pc.addEventListener('connectionstatechange', () => log(`capo: connessione ${r.pc.connectionState}`));
+      pannello(`<section class="panel stack"><p>Ora fai inquadrare questo QR al telefono che si unisce.</p>
+        <div class="qr">${P.qrSvg(r.codice)}</div><code>${esc(r.codice)}</code><button class="full" data-a="annulla">Annulla</button></section>`);
+      const canale = await r.canale;
+      const o = { nome: '…', canale, rtt: null };
+      canale.addEventListener('open', () => { log('capo: canale aperto'); aggiornaLista(); pannello(); });
+      canale.addEventListener('close', () => { log(`capo: ${o.nome} è caduto`); aggiornaLista(); });
+      canale.addEventListener('message', (e) => {
+        const m = JSON.parse(e.data);
+        if (m.t === 'ciao') { o.nome = m.nome; inoltra({ t: 'msg', da: '📡', testo: `${m.nome} è entrato` }); }
+        if (m.t === 'pong') o.rtt = Math.round(performance.now() - m.at);
+        if (m.t === 'msg') inoltra({ ...m, da: o.nome });
+        aggiornaLista();
+      });
+      ospiti.push(o);
+      if (canale.readyState === 'open') { aggiornaLista(); pannello(); }
+    }
+
+    // il capo smista i messaggi a tutti (topologia a stella, come farà il gioco)
+    function inoltra(m) {
+      messaggi.push(m);
+      aggiornaChat();
+      for (const o of ospiti) if (o.canale.readyState === 'open') o.canale.send(JSON.stringify(m));
+    }
+    setInterval(() => {
+      for (const o of ospiti) if (o.canale.readyState === 'open') o.canale.send(JSON.stringify({ t: 'ping', at: performance.now() }));
+    }, 2000);
+
+    // ---------- ospite ----------
+    async function unisciti(nome) {
+      $app.innerHTML = '<p class="muted">Preparo il QR…</p>';
+      // chiedere subito la fotocamera aiuta: con il permesso dato, alcuni browser usano l'indirizzo vero invece di quello nascosto
+      try { (await navigator.mediaDevices.getUserMedia({ video: true })).getTracks().forEach((t) => t.stop()); } catch (e) { log(`fotocamera negata: ${e.message}`); }
+      const o = await P.creaOfferta();
+      log(`offerta pronta (${o.codice.length} car.): ${P.tipiCandidati(o.codice).join(', ') || 'nessun candidato!'}`);
+      o.pc.addEventListener('connectionstatechange', () => log(`ospite: connessione ${o.pc.connectionState}`));
+      canaleCapo = o.canale;
+      canaleCapo.addEventListener('open', () => {
+        log('ospite: canale aperto');
+        canaleCapo.send(JSON.stringify({ t: 'ciao', nome }));
+        vistaOspite();
+      });
+      canaleCapo.addEventListener('close', () => { log('ospite: capo perso'); vistaOspite(); });
+      canaleCapo.addEventListener('message', (e) => {
+        const m = JSON.parse(e.data);
+        if (m.t === 'ping') return canaleCapo.send(JSON.stringify({ t: 'pong', at: m.at }));
+        if (m.t === 'msg') { messaggi.push(m); aggiornaChat(); }
+      });
+      $app.innerHTML = `
+        <section class="panel stack"><p>1. Fai inquadrare questo QR al capo.</p>
+          <div class="qr">${P.qrSvg(o.codice)}</div><code>${esc(o.codice)}</code>
+          <button class="primary full" data-a="leggi-risposta">2. Il capo ha letto: inquadra il suo QR</button>
+          <div id="area-cam"></div>
+          <details><summary class="muted">Senza fotocamera: incolla il codice del capo</summary><form data-f="incolla-risposta"><textarea name="c"></textarea><button>Usa</button></form></details>
+        </section>`;
+      unisciti.offerta = o;
+    }
+
+    async function leggiRisposta() {
+      document.getElementById('area-cam').innerHTML = '<video id="cam"></video>';
+      scanner = P.leggiQr(document.getElementById('cam'));
+      try {
+        const codice = await scanner.letto;
+        if (codice) await usaRisposta(codice);
+      } catch (e) { log(`fotocamera: ${e.message}`); }
+    }
+
+    async function usaRisposta(codice) {
+      chiudiScanner();
+      log(`risposta letta: ${P.tipiCandidati(codice).join(', ')}`);
+      await unisciti.offerta.accettaRisposta(codice);
+      $app.innerHTML = '<p class="muted">Collegamento in corso…</p>';
+      setTimeout(() => { if (canaleCapo.readyState !== 'open') $app.innerHTML = '<section class="panel"><p class="ko">Non riesco a collegarmi. Apri la diagnostica e mandala a Claude.</p></section>'; }, 10000);
+    }
+
+    function vistaOspite() {
+      $app.innerHTML = `<h2>${canaleCapo.readyState === 'open' ? '🟢 Collegato al capo' : '🔴 Collegamento perso'}</h2>${chat()}`;
+    }
+
+    // ---------- chat di prova ----------
+    function chat() {
+      return `<h2>Messaggi</h2><section class="panel stack">
+        <ul class="list" id="messaggi">${righeChat()}</ul>
+        <form data-f="msg" class="row"><input name="c" placeholder="Messaggio" maxlength="80" required><button>Invia</button></form></section>`;
+    }
+
+    const righeChat = () => messaggi.slice(-8).map((m) => `<li><span><strong>${esc(m.da)}</strong> ${esc(m.testo)}</span></li>`).join('') || '<li class="muted">Scrivete qualcosa: arriva a tutti passando dal capo.</li>';
+    function aggiornaChat() { const $m = document.getElementById('messaggi'); if ($m) $m.innerHTML = righeChat(); }
+
+    function invia(testo) {
+      if (ruolo === 'capo') inoltra({ t: 'msg', da: '👑 capo', testo });
+      else canaleCapo?.send(JSON.stringify({ t: 'msg', testo }));
+    }
+
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      const azioni = {
+        capo: () => { ruolo = 'capo'; vistaCapo(); },
+        aggiungi,
+        annulla: () => { chiudiScanner(); pannello(); },
+        'leggi-risposta': leggiRisposta,
+      };
+      azioni[a]?.();
+    });
+    document.addEventListener('submit', (e) => {
+      const f = e.target.closest('[data-f]');
+      if (!f) return;
+      e.preventDefault();
+      const d = new FormData(f);
+      const c = String(d.get('c') ?? '').trim();
+      if (f.dataset.f === 'ospite') { ruolo = 'ospite'; unisciti(String(d.get('nome')).trim()); }
+      if (f.dataset.f === 'incolla-offerta') accettaOfferta(c).catch((x) => log(x.message));
+      if (f.dataset.f === 'incolla-risposta') usaRisposta(c).catch((x) => log(x.message));
+      if (f.dataset.f === 'msg') { invia(c); f.reset(); }
+    });
+    window.addEventListener('error', (e) => log(`errore: ${e.message}`));
+    window.addEventListener('unhandledrejection', (e) => log(`errore: ${e.reason?.message ?? e.reason}`));
+    home();
+  </script>
+</body>
+</html>

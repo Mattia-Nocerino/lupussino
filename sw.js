@@ -2,10 +2,11 @@
 // - file del sito: prima la rete (così prendi sempre l'ultima versione), la copia salvata se sei offline
 //   o se la rete non risponde entro qualche secondo (campo debole)
 // - SDK Firebase (indirizzi con la versione, non cambiano mai): prima la copia salvata
-const CACHE = 'lupussino-v1';
+const CACHE = 'lupussino-v2';
 const SDK = '12.19.0';
 const FILE = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/game.js', 'js/offline.js', 'js/firebase-config.js',
+  'js/p2p.js', 'prova-rete.html', 'vendor/qrcode.js', 'vendor/jsQR.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   ...['app', 'auth', 'database'].map((m) => `https://www.gstatic.com/firebasejs/${SDK}/firebase-${m}.js`),
 ];
