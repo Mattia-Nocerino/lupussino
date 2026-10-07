@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signInAnonymously, signOut,
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signInAnonymously, signOut, linkWithPopup, linkWithRedirect,
   onAuthStateChanged, connectAuthEmulator,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 import {
@@ -93,7 +93,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   S.nome = localStorage.getItem('lupussino.nome') || user.displayName || `Ospite ${user.uid.slice(0, 4)}`;
   render(); // senza campo le operazioni sotto restano in attesa: intanto la pagina deve funzionare
-  tenta(() => update(ref(dbFirebase, `users/${user.uid}`), { nome: S.nome, ultimoAccesso: serverTimestamp() }));
+  tenta(() => update(ref(dbFirebase, `users/${user.uid}`), { nome: S.nome, ospite: user.isAnonymous, ultimoAccesso: serverTimestamp() }));
   ascoltaStanze();
   const salvata = localStorage.getItem('lupussino.room');
   if (salvata && navigator.onLine) await tenta(() => entraInStanza(salvata, { soloSeGiaDentro: true }));
@@ -126,13 +126,22 @@ async function salvaNome(nome) {
 
 // ---------- stanze ----------
 
+// Una stanza è abbandonata se non c'è nessuno online; chi ne fa parte la vede ancora per un giorno.
+const UN_GIORNO_MS = 24 * 3600 * 1000;
+function stanzaViva(r) {
+  const giocatori = Object.entries(r.players ?? {});
+  if (giocatori.some(([, g]) => g.online !== false)) return true;
+  return !!r.players?.[S.user?.uid] && ora() - (r.createdAt ?? 0) < UN_GIORNO_MS;
+}
+
 function ascoltaStanze() {
   unsubStanze?.();
   const q = query(ref(db, 'rooms'), orderByChild('createdAt'), limitToLast(50));
   unsubStanze = onValue(q, (snap) => {
     const stanze = [];
     snap.forEach((c) => { stanze.push({ id: c.key, ...c.val() }); });
-    S.stanze = stanze.reverse(); // anche quelle in corso: chi è uscito a metà partita deve poter rientrare
+    // anche quelle in corso (chi è uscito a metà partita deve poter rientrare), ma non quelle abbandonate
+    S.stanze = stanze.filter(stanzaViva).reverse();
     // aggiorna solo la lista, così non si perde quello che l'utente sta scrivendo nei campi
     const $lista = document.getElementById('lista-stanze');
     if ($lista && !S.room) $lista.innerHTML = listaStanze();
@@ -183,6 +192,7 @@ function osservaStanza(id) {
     const inGioco = !!S.room.inGioco?.[S.user.uid];
     if (S.room.status === 'playing' && inGioco && S.manoRound !== S.room.round) caricaMano();
     if (S.room.status === 'playing' && sonoHost() && tuttiHannoVotato()) chiudiVotoTraPoco();
+    if (S.room.status === 'playing' && sonoHost() && S.room.fineVoto) chiudiVotoAllaScadenza();
     controllaCapo();
     render();
   }, (e) => { toast(e.message); lasciaLocalmente(); });
@@ -301,6 +311,9 @@ async function avviaPartita() {
     [`${roomPath()}/nGiocatori`]: uids.length, // il mazzo del round resta questo anche se poi qualcuno viene rimosso
     [`${roomPath()}/voted`]: null,
     [`${roomPath()}/result`]: null,
+    // timer di discussione: alla scadenza il voto si chiude per tutti
+    [`${roomPath()}/fineVoto`]: S.room.timer ? ora() + S.room.timer * 60_000 : null,
+    [`${roomPath()}/durataVoto`]: S.room.timer ? S.room.timer * 60_000 : null,
   };
   for (const uid of uids) modifiche[`hands/${S.roomId}/${round}/${uid}`] = mani[uid];
   await update(ref(db), modifiche);
@@ -338,6 +351,7 @@ function scegli(bersaglio) {
 async function confermaVoto() {
   const bersaglio = S.scelta;
   if (!bersaglio || (S.mioVoto && !S.cambiando)) return;
+  if (votoChiuso()) { render(); return toast('Tempo scaduto: il voto è chiuso.'); }
   if (bersaglio !== S.mioVoto) {
     const modifiche = { [`votes/${S.roomId}/${S.room.round}/${S.user.uid}`]: { bersaglio, cambi: S.cambi, at: serverTimestamp() } };
     if (!S.room.voted?.[S.user.uid]) modifiche[`${roomPath()}/voted/${S.user.uid}`] = true;
@@ -363,6 +377,18 @@ function chiudiVotoTraPoco() {
     if (S.room?.status === 'playing' && sonoHost() && tuttiHannoVotato()) calcolaRisultato();
   }, ULTIMI_SECONDI_MS);
 }
+
+// Timer scaduto: il capo chiude il voto con i voti dati fin lì (chi non ha votato resta senza voto).
+function chiudiVotoAllaScadenza() {
+  const fine = S.room.fineVoto;
+  if (chiudiVotoAllaScadenza.fine === fine) return;
+  chiudiVotoAllaScadenza.fine = fine;
+  clearTimeout(chiudiVotoAllaScadenza.timer);
+  chiudiVotoAllaScadenza.timer = setTimeout(() => {
+    if (S.room?.status === 'playing' && S.room.fineVoto === fine && sonoHost()) calcolaRisultato();
+  }, Math.max(0, fine - ora()) + 1500);
+}
+const votoChiuso = () => !!S.room?.fineVoto && ora() > S.room.fineVoto;
 
 function tuttiHannoVotato() {
   const uids = Object.keys(S.room.inGioco ?? {});
@@ -392,6 +418,7 @@ async function calcolaRisultato() {
     const ruoli = Object.fromEntries(Object.entries(mazzo.assegnazioni).filter(([u]) => presenti(u)));
     const ospiti = Object.fromEntries(Object.keys(ruoli).filter((u) => S.room.players?.[u]?.ospite).map((u) => [u, true]));
     const punti = G.punteggi(ruoli, voti, esito);
+    G.bonusSerie(punti, S.room.classifica, esito.vincitori);
     const partita = {
       ...esito, ruoli, scarti: mazzo.scarti, voti, cambi, tempi, ospiti, punti, giocatori: S.room.inGioco, finitaIl: Date.now(),
     };
@@ -435,17 +462,54 @@ async function apriClassifica() {
     if (partite) O.ricordaPartite(partite, { uid: S.user.uid, nome: S.nome, ospite: S.user.isAnonymous });
   }
   if (!partite) { partite = O.storico(); S.classificheLocali = true; }
-  S.classifiche = G.classifiche(partite);
+  const promossi = S.classificheLocali ? new Set() : await ospitiPromossi(partite).catch(() => new Set());
+  S.classifiche = G.classifiche(partite, { promossi });
   render();
 }
 
 async function nuovaPartita() {
-  await update(roomRef(), { status: 'lobby', inGioco: null, voted: null, result: null });
+  await update(roomRef(), { status: 'lobby', inGioco: null, voted: null, result: null, fineVoto: null, durataVoto: null });
+}
+
+async function chiudiStanza() {
+  if (!confirm('Chiudere la stanza per tutti? La classifica della stanza andrà persa (le partite restano nello storico).')) return;
+  await remove(roomRef());
+}
+
+// ---------- ospite → Google ----------
+// Collega Google al profilo ospite: l'uid resta lo stesso, quindi partite e punti già giocati restano suoi.
+async function collegaGoogle() {
+  const provider = new GoogleAuthProvider();
+  try {
+    await linkWithPopup(auth.currentUser, provider);
+  } catch (e) {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment') return linkWithRedirect(auth.currentUser, provider);
+    if (e.code === 'auth/credential-already-in-use' || e.code === 'auth/email-already-in-use') {
+      throw new Error('Questo account Google è già usato su Lupussino: entra con quello (le partite da ospite restano all\'ospite).');
+    }
+    throw e;
+  }
+  await auth.currentUser.reload();
+  S.user = auth.currentUser;
+  S.nome = localStorage.getItem('lupussino.nome') || S.user.displayName || S.nome;
+  await update(ref(dbFirebase, `users/${S.user.uid}`), { nome: S.nome, ospite: false });
+  if (S.room) await update(ref(db, `${roomPath()}/players/${S.user.uid}`), { ospite: false }).catch(() => {});
+  toast('Account Google collegato: ora entri in classifica ✅');
+  render();
+}
+
+// Gli ospiti che poi hanno collegato Google tornano in classifica con le partite giocate da ospite.
+async function ospitiPromossi(partite) {
+  const ospiti = [...new Set(partite.flatMap((p) => Object.keys(p.ospiti ?? {})))].slice(0, 200);
+  const letti = await Promise.all(ospiti.map((u) => get(ref(dbFirebase, `users/${u}/ospite`)).then((x) => [u, x.val()]).catch(() => [u, null])));
+  return new Set(letti.filter(([, ospite]) => ospite === false).map(([u]) => u));
 }
 
 // ---------- viste ----------
 
 function render() {
+  schermoAcceso();
+  setTimeout(aggiornaTimer);
   if (S.off) {
     $utente.innerHTML = '<span>📴 Senza campo</span>';
     $app.innerHTML = vistaOffline();
@@ -470,12 +534,13 @@ function render() {
 
 const vistaLogin = () => `
   <section class="panel stack" style="text-align:center">
-    <p>Il gioco di bluff da fare in compagnia.<br><span class="muted">Da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.</span></p>
+    <p>Da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.</p>
     <button class="primary full" data-action="login">Entra con Google</button>
     <button class="full" data-action="ospite">Entra come ospite</button>
     <p class="muted">Gli ospiti non finiscono in classifica e perdono il profilo se cancellano i dati del browser.</p>
   </section>
-  ${bottoneOffline()}`;
+  <p class="discreto"><button class="link" data-action="rete-apri">📴 Senza internet? Gioca senza account</button></p>
+  ${linkRegole()}`;
 
 function listaStanze() {
   const stanze = S.stanze.map((r) => {
@@ -514,18 +579,30 @@ function vistaClassifica() {
 }
 
 function vistaHome() {
+  const offline = !navigator.onLine;
+  const modo = (valore, testo, attivo) => `<label class="modo"><input type="radio" name="modo" value="${valore}" ${attivo ? 'checked' : ''}> ${testo}</label>`;
   return `
-    ${navigator.onLine ? '' : '<p class="panel">📴 Sei senza campo: le stanze online torneranno con internet. Intanto potete giocare con un solo telefono.</p>'}
-    ${bottoneOffline()}
-    <button class="full" data-action="classifica">🏆 Classifiche</button>
+    ${offline ? '<p class="panel">📴 Sei senza campo: le stanze online torneranno con internet. Puoi comunque creare una stanza senza internet.</p>' : ''}
     <section class="panel stack">
       <label class="muted" for="nome">Il tuo nome</label>
       <form data-form="nome" class="row"><input id="nome" name="nome" value="${esc(S.nome)}" maxlength="20" required><button>Salva</button></form>
+      ${S.user?.isAnonymous && !S.user.locale ? '<button class="full" data-action="collega">🔗 Sei ospite: collega Google per entrare in classifica con le partite già giocate</button>' : ''}
     </section>
     <h2>Stanze aperte</h2>
     <section class="panel" id="lista-stanze">${listaStanze()}</section>
+    <p class="discreto"><button class="link" data-action="rete-unisciti">📷 Entra in una stanza senza internet</button>
+      ${Capo.salvato()?.roomId ? ' · <button class="link" data-action="rete-riprendi">↩️ Riprendi la tua stanza senza internet</button>' : ''}</p>
     <h2>Crea stanza</h2>
-    <form data-form="crea" class="panel row"><input name="nome" placeholder="Nome della stanza" maxlength="30" required><button class="primary">Crea</button></form>`;
+    <form data-form="crea" class="panel stack">
+      <div class="row"><input name="nome" placeholder="Nome della stanza" maxlength="30" value="Stanza di ${esc(S.nome)}" required><button class="primary">Crea</button></div>
+      <div class="modi">
+        ${modo('online', '🌐 Online', !offline)}
+        ${modo('rete', '📡 Senza internet, un telefono a testa (hotspot)', offline)}
+        ${modo('telefono', '📴 Senza internet, un solo telefono che passa di mano', false)}
+      </div>
+    </form>
+    <button class="full" data-action="classifica">🏆 Classifiche</button>
+    ${linkRegole()}`;
 }
 
 function listaGiocatori() {
@@ -547,13 +624,14 @@ function vistaLobby() {
       <p class="muted">Giocatori ${uids.length}/${G.MAX_GIOCATORI} · carte in gioco ${uids.length + G.CARTE_EXTRA}</p>
       ${listaGiocatori()}
     </section>
+    ${sceltaTimer(r)}
     ${classificaStanza(r.classifica)}
     ${bottoneTelefoni()}
     ${sonoHost()
     ? `<button class="primary full" data-action="avvia" ${ok ? '' : 'disabled'}>Avvia partita</button>
        ${ok ? '' : `<p class="muted">Servono almeno ${G.MIN_GIOCATORI} giocatori.</p>`}`
     : `<p class="muted">In attesa che ${esc(r.players[r.hostUid]?.nome)} avvii la partita…</p>`}
-    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+    <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
 }
 
 function vistaPartita() {
@@ -578,7 +656,10 @@ function vistaPartita() {
   const votanti = uids.filter((u) => r.voted?.[u]).length;
   const mancano = uids.filter((u) => !r.voted?.[u]).map((u) => esc(r.inGioco[u])).join(', ');
   const bottone = (u, testo) => `<button data-action="scegli" data-uid="${esc(u)}" class="${S.scelta === u ? 'scelto' : ''}">${testo}</button>`;
-  const voto = S.mioVoto && !S.cambiando
+  const chiuso = votoChiuso();
+  const voto = chiuso
+    ? `<p>⏰ <strong>Tempo scaduto</strong>: il voto è chiuso. ${S.mioVoto ? `Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.` : 'Non hai votato.'}</p>`
+    : S.mioVoto && !S.cambiando
     ? `<p>Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.</p>
       <button class="full" data-action="cambia-voto">✏️ Cambia voto</button>`
     : `<div class="voti">${uids.filter((u) => u !== S.user.uid).map((u) => bottone(u, esc(r.inGioco[u]))).join('')}</div>
@@ -586,10 +667,11 @@ function vistaPartita() {
       <button class="primary full" data-action="conferma" ${S.scelta ? '' : 'disabled'}>
         ${S.scelta ? `Conferma voto: ${esc(nomeDi(S.scelta))}` : 'Scegli chi votare'}</button>
       ${S.cambiando ? '<button class="link" data-action="annulla-cambio">Lascia il voto com\'era</button>' : ''}`;
-  const ultimi = votanti === uids.length ? '<p class="ok">Hanno votato tutti: pochi secondi per cambiare idea…</p>' : '';
+  const ultimi = votanti === uids.length && !chiuso ? '<p class="ok">Hanno votato tutti: pochi secondi per cambiare idea…</p>' : '';
 
   return `
     <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
+    ${r.fineVoto ? `<div class="timer" data-fine="${r.fineVoto}" data-durata="${r.durataVoto ?? 1}"><span class="timer-barra"></span><span class="timer-testo"></span></div>` : ''}
     ${carta}
     <h2>Vota</h2>
     <section class="panel stack">
@@ -616,7 +698,16 @@ function vistaRisultato() {
     : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
     ${pannelloGiocatori()}
     ${bottoneTelefoni()}
-    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+    <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
+}
+
+// Il capo sceglie il timer prima di avviare; gli altri lo vedono.
+function sceltaTimer(r) {
+  const opzioni = [0, 1, 2, 3, 5, 8];
+  const testo = (m) => (m ? `${m} min` : 'nessuno');
+  if (!sonoHost()) return r.timer ? `<p class="muted">⏱️ Timer di discussione: ${testo(r.timer)}, poi il voto si chiude.</p>` : '';
+  return `<section class="panel row"><label class="muted" for="timer" style="flex:1">⏱️ Timer di discussione</label>
+    <select id="timer" data-change="timer">${opzioni.map((m) => `<option value="${m}" ${(r.timer ?? 0) === m ? 'selected' : ''}>${testo(m)}</option>`).join('')}</select></section>`;
 }
 
 const conSegno = (n) => (n > 0 ? `+${n}` : `${n}`);
@@ -683,7 +774,8 @@ function mostraMazzo(n, titolo) {
   $d.innerHTML = mazzo
     ? `<h2>${titolo}</h2><ul class="list">${righe}</ul>
        <p class="muted">${mazzo.length} carte: una a testa e ${G.CARTE_EXTRA} scartate a caso, quindi qualche ruolo potrebbe non essere in gioco.</p>
-       <button class="primary full" data-chiudi>Chiudi</button>`
+       <button class="primary full" data-chiudi>Chiudi</button>
+       <p class="discreto"><button class="link" data-action="regole">📖 Regole e punti</button></p>`
     : `<p>Servono da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.</p><button class="full" data-chiudi>Chiudi</button>`;
   $d.addEventListener('click', (e) => { if (e.target === $d || e.target.closest('[data-chiudi]')) $d.close(); });
   $d.addEventListener('close', () => $d.remove());
@@ -716,8 +808,7 @@ function festeggia(chiave, result, sotto) {
 // Niente rete: il telefono mescola, ognuno guarda la sua carta e vota di nascosto, poi il risultato.
 // Le partite finite restano in coda sul telefono e vanno nel database appena torna internet.
 
-const bottoneOffline = () => `<button class="full" data-action="rete-apri">📡 Senza internet, ognuno col suo telefono</button>
-  <button class="full" data-action="off-apri">📴 Senza internet, un solo telefono</button>`;
+
 const nomiVincitori = (res, nome) => (res.vincitore === G.PAREGGIO ? 'Non vince nessuno'
   : Object.values(res.vincitori ?? {}).map((u) => esc(nome(u))).join(', ') || 'Nessuno a cui dare i punti');
 
@@ -834,6 +925,7 @@ function concludiOff() {
     giocatori: Object.fromEntries(o.ordine.map((u) => [u, o.giocatori[u]])), finitaIl: Date.now(),
   };
   partita.punti = G.punteggi(o.assegnazioni, o.voti, esito);
+  G.bonusSerie(partita.punti, o.classifica, esito.vincitori);
   o.classifica = G.aggiungiAllaClassifica(o.classifica, partita);
   o.result = { ...partita, fatti: G.curiosita(partita, O.storico()) };
   o.fase = 'fine';
@@ -1019,6 +1111,7 @@ function vistaRete() {
       <button class="primary full" name="come" value="capo">👑 Creo la stanza</button>
       <button class="full" name="come" value="ospite">📷 Mi unisco</button>
     </form>
+    <button class="full" data-action="off-apri">📴 Un solo telefono che passa di mano</button>
     ${salvata?.roomId ? '<button class="full" data-action="rete-riprendi">↩️ Riprendi la stanza senza internet di prima</button>' : ''}
     <p class="muted">Su iPhone, se il collegamento non parte: Impostazioni → Privacy → Rete locale, e attiva il browser.</p>`;
 }
@@ -1037,8 +1130,13 @@ function avvisoRete() {
   return '';
 }
 
+// Schermo sempre acceso mentre si è in una stanza o in una partita senza internet.
 async function schermoAcceso() {
-  try { S.rete.wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* non supportato */ }
+  const serve = !document.hidden && !!(S.room || S.off || S.rete);
+  try {
+    if (serve && (!schermoAcceso.blocco || schermoAcceso.blocco.released)) schermoAcceso.blocco = await navigator.wakeLock?.request('screen');
+    if (!serve && schermoAcceso.blocco && !schermoAcceso.blocco.released) { await schermoAcceso.blocco.release(); schermoAcceso.blocco = null; }
+  } catch { /* non supportato o negato */ }
 }
 
 function chiudiRete() {
@@ -1046,19 +1144,18 @@ function chiudiRete() {
   S.rete = null;
   r.capo?.chiudi();
   r.ospite?.chiudi();
-  r.wakeLock?.release?.().catch?.(() => {});
   chiudiDialogo();
   db = dbFirebase;
   if (S.user?.locale) S.user = auth.currentUser;
 }
 
-async function creaStanzaRete() {
+async function creaStanzaRete(nome = `Stanza di ${S.nome}`) {
   const capo = new Capo({ uid: S.user.uid });
   S.rete = { capo };
   db = capo;
   capo.alCambio = () => { const $b = document.querySelector('[data-action="rete-aggiungi"] .tag'); if ($b) $b.textContent = `${capo.collegati().length} collegati`; };
   schermoAcceso();
-  await creaStanza(`Stanza di ${S.nome}`);
+  await creaStanza(nome);
   capo.roomId = S.roomId;
   capo.salva();
 }
@@ -1169,6 +1266,66 @@ async function uniscitiRete() {
   }
 }
 
+// ---------- timer di discussione ----------
+// Barra sottile in alto che si consuma; negli ultimi 30 secondi diventa rossa e pulsa piano.
+function aggiornaTimer() {
+  for (const $t of document.querySelectorAll('.timer[data-fine]')) {
+    const resta = Math.max(0, Number($t.dataset.fine) - ora());
+    const durata = Number($t.dataset.durata) || 1;
+    const s = Math.ceil(resta / 1000);
+    $t.querySelector('.timer-testo').textContent = resta ? `⏱️ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '⏰ Tempo scaduto';
+    $t.querySelector('.timer-barra').style.width = `${(resta / durata) * 100}%`;
+    $t.classList.toggle('ultimi', resta > 0 && resta <= 30_000);
+    $t.classList.toggle('scaduto', resta === 0);
+    if (resta > 0 && resta <= 10_000 && !aggiornaTimer.vibrato) { aggiornaTimer.vibrato = true; navigator.vibrate?.(80); }
+    if (resta > 10_000) aggiornaTimer.vibrato = false;
+    if (resta === 0 && !$t.dataset.chiuso) { $t.dataset.chiuso = '1'; render(); } // blocca i bottoni del voto
+  }
+}
+setInterval(aggiornaTimer, 500);
+
+// ---------- regolamento ----------
+const linkRegole = () => '<p class="discreto"><button class="link" data-action="regole">📖 Regole</button></p>';
+
+function mostraRegole() {
+  const ruoli = [
+    ['Cittadino', 'Nessun potere: ragiona e vota bene.'],
+    ['Cittadina', 'Come il Cittadino.'],
+    ['Testimone', 'Sa se c\'è un altro Testimone in gioco.'],
+    ['Investigatore', 'Vede una delle 3 carte scartate, quindi sa un ruolo che non è in gioco.'],
+    ['Investigatrice', 'Come l\'Investigatore (possono vedere la stessa carta).'],
+    ['Avvocato', 'Sa che un altro giocatore, estratto a caso, è buono.'],
+    ['Assassino', 'Conosce gli altri assassini. Non deve farsi votare.'],
+    ['Mitomane', 'Sa chi sono gli assassini e vince con loro: deve farsi votare al posto loro.'],
+  ];
+  const $d = document.createElement('dialog');
+  $d.className = 'mazzo regole';
+  $d.innerHTML = `
+    <h2>📖 Regole</h2>
+    <p>Ognuno riceve una carta segreta: si gioca da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI}, con ${G.CARTE_EXTRA} carte in più che restano scartate, quindi non tutti i ruoli sono per forza in gioco.</p>
+    <ul class="list">${ruoli.map(([r, t]) => `<li><span>${pillola(r)}</span><span class="muted" style="text-align:right">${t}</span></li>`).join('')}</ul>
+    <h2>Voto</h2>
+    <p>Si discute e poi ognuno vota chi pensa sia un assassino, oppure ${G.EMOJI_CIELO} <strong>Cielo</strong> se pensa che non ce ne siano. Non si può votare sé stessi. Il voto si può cambiare finché non si chiude.</p>
+    <p>Contano <strong>solo i voti dei buoni</strong>. Un voto è giusto se va a un assassino, o al cielo quando non ci sono assassini.</p>
+    <ul class="fatti">
+      <li>Più voti giusti che sbagliati: vincono i buoni.</li>
+      <li>Più voti sbagliati: vincono i cattivi.</li>
+      <li>Parità: vincono i cattivi se almeno un voto sbagliato è andato al Mitomane, altrimenti pareggio.</li>
+    </ul>
+    <h2>Punti</h2>
+    <ul class="fatti">
+      <li>Squadra vincente: <strong>+${G.PUNTI.vittoria}</strong> a testa (col pareggio nessuno).</li>
+      <li>Buoni: voto giusto +${G.PUNTI.votoGiusto}, cielo giusto +${G.PUNTI.cieloGiusto}, voto sbagliato ${G.PUNTI.votoSbagliato} (${G.PUNTI.votoSbagliatoConIndizio} per Investigatori e Avvocato).</li>
+      <li>Assassino che nessun buono vota: +${G.PUNTI.assassinoInvisibile}. Mitomane: +${G.PUNTI.votoAlMitomane} per ogni buono che lo vota (max +${G.PUNTI.maxMitomane}).</li>
+      <li>Serie di vittorie nella stessa stanza: +1 alla terza di fila, +2 alla quarta, +3 dalla quinta.</li>
+    </ul>
+    <button class="primary full" data-chiudi>Chiudi</button>`;
+  $d.addEventListener('click', (e) => { if (e.target === $d || e.target.closest('[data-chiudi]')) $d.close(); });
+  $d.addEventListener('close', () => $d.remove());
+  document.body.append($d);
+  $d.showModal();
+}
+
 // ---------- eventi ----------
 
 document.addEventListener('click', (e) => {
@@ -1191,6 +1348,9 @@ document.addEventListener('click', (e) => {
     scegli: () => scegli(uid),
     conferma: () => tenta(confermaVoto),
     'cambia-voto': cambiaVoto,
+    'chiudi-stanza': () => tenta(chiudiStanza),
+    collega: () => tenta(collegaGoogle),
+    regole: mostraRegole,
     'annulla-cambio': () => { S.cambiando = false; S.scelta = null; render(); },
     classifica: () => tenta(apriClassifica),
     indietro: () => { S.vista = null; render(); },
@@ -1199,6 +1359,7 @@ document.addEventListener('click', (e) => {
     'rete-apri': () => { S.vista = 'rete'; render(); },
     'rete-indietro': () => { S.vista = null; if (S.rete && !S.room) chiudiRete(); render(); },
     'rete-riprendi': () => { S.vista = null; tenta(riprendiCapo); },
+    'rete-unisciti': () => tenta(async () => { preparaNome(S.nome); await uniscitiRete(); }),
     'rete-aggiungi': aggiungiTelefono,
     'rete-ricollega': uniscitiRete,
     'rete-leggi-capo': () => dialogo.avanti?.(),
@@ -1221,13 +1382,22 @@ document.addEventListener('click', (e) => {
   azioni[action]?.();
 });
 
+document.addEventListener('change', (e) => {
+  if (e.target.dataset.change === 'timer' && sonoHost()) tenta(() => update(roomRef(), { timer: Number(e.target.value) || null }));
+});
+
 document.addEventListener('submit', (e) => {
   const form = e.target.closest('[data-form]');
   if (!form) return;
   e.preventDefault();
   const valore = new FormData(form).get('nome') ?? '';
   if (form.dataset.form === 'nome') tenta(() => salvaNome(valore));
-  if (form.dataset.form === 'crea') tenta(() => creaStanza(valore));
+  if (form.dataset.form === 'crea') {
+    const modo = new FormData(form).get('modo') ?? 'online';
+    if (modo === 'telefono') apriOffline();
+    else if (modo === 'rete') tenta(async () => { preparaNome(S.nome); await creaStanzaRete(valore); });
+    else tenta(() => creaStanza(valore));
+  }
   if (form.dataset.form === 'off-nuovo') aggiungiOff(null, valore);
   if (form.dataset.form === 'rete-codice') dialogo.codice?.(String(new FormData(form).get('codice') ?? '').trim());
   if (form.dataset.form === 'rete') {
@@ -1245,5 +1415,5 @@ document.addEventListener('submit', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && !S.coperta) { S.coperta = true; render(); }
   if (document.hidden && S.off?.mostra) { S.off.mostra = false; salvaOff(); }
-  if (!document.hidden && S.rete) schermoAcceso(); // il blocco schermo acceso si perde quando cambi app
+  schermoAcceso(); // il blocco schermo acceso si perde quando cambi app
 });

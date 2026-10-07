@@ -29,7 +29,7 @@
 
         "voted": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && data.parent().parent().child('status').val() === 'playing' && data.parent().parent().child('inGioco').child($uid).exists()"
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && data.parent().parent().child('status').val() === 'playing' && data.parent().parent().child('inGioco').child($uid).exists() && (!data.parent().parent().child('fineVoto').exists() || now <= data.parent().parent().child('fineVoto').val() + 3000)"
           }
         }
       }
@@ -59,7 +59,7 @@
         "$round": {
           "$uid": {
             ".read": "auth != null && auth.uid === $uid",
-            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('round').val() + '' === $round && root.child('rooms').child($roomId).child('inGioco').child($uid).exists()",
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('round').val() + '' === $round && root.child('rooms').child($roomId).child('inGioco').child($uid).exists() && (!root.child('rooms').child($roomId).child('fineVoto').exists() || now <= root.child('rooms').child($roomId).child('fineVoto').val() + 3000)",
             ".validate": "newData.hasChildren(['bersaglio']) && newData.child('bersaglio').isString() && (newData.child('bersaglio').val() === '__cielo__' || (newData.child('bersaglio').val() !== $uid && root.child('rooms').child($roomId).child('inGioco').child(newData.child('bersaglio').val()).exists())) && (!newData.child('cambi').exists() || newData.child('cambi').isNumber())"
           }
         }

@@ -160,13 +160,13 @@ export function esitoVoto(assegnazioni, voti) {
 // voti {uid: bersaglio}, dettaglio {uid: true|false} (solo buoni), vincitore, vincitori [uid], finitaIl.
 const lista = (x) => Object.values(x ?? {});
 
-export function statistiche(partite) {
+export function statistiche(partite, promossi = new Set()) {
   const st = {};
   const ordinate = [...partite].sort((a, b) => (a.finitaIl ?? 0) - (b.finitaIl ?? 0));
   for (const p of ordinate) {
     const vincitori = lista(p.vincitori);
     for (const [uid, ruolo] of Object.entries(p.ruoli ?? {})) {
-      if (p.ospiti?.[uid]) continue; // gli ospiti non entrano in classifica
+      if (p.ospiti?.[uid] && !promossi.has(uid)) continue; // gli ospiti non entrano in classifica (finché non collegano Google)
       const s = (st[uid] ??= {
         uid, nome: '', giocate: 0, vinte: 0, giocateAssassino: 0, vinteAssassino: 0,
         giocateMitomane: 0, vinteMitomane: 0, votiDaBuono: 0, votiSbagliati: 0, punti: 0,
@@ -191,8 +191,8 @@ export function statistiche(partite) {
 const perc = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 
 // Restituisce le classifiche già ordinate (prime `quanti` posizioni).
-export function classifiche(partite, { minimoVoti = 3, quanti = 5 } = {}) {
-  const st = statistiche(partite);
+export function classifiche(partite, { minimoVoti = 3, quanti = 5, promossi } = {}) {
+  const st = statistiche(partite, promossi);
   const top = (arr, chiave, ...spareggi) => [...arr]
     .sort((a, b) => [chiave, ...spareggi].reduce((r, k) => r || b[k] - a[k], 0))
     .slice(0, quanti);
@@ -331,11 +331,13 @@ export function punteggi(assegnazioni, voti, esito) {
 export function aggiungiAllaClassifica(classifica, partita) {
   const nuova = structuredClone(classifica ?? {});
   for (const [uid, { totale }] of Object.entries(partita.punti ?? {})) {
-    const r = (nuova[uid] ??= { nome: '', punti: 0, partite: 0, vinte: 0 });
+    const r = (nuova[uid] ??= { nome: '', punti: 0, partite: 0, vinte: 0, serie: 0 });
     r.nome = partita.giocatori?.[uid] ?? r.nome;
     r.punti += totale;
     r.partite += 1;
-    if (lista(partita.vincitori).includes(uid)) r.vinte += 1;
+    const vinto = lista(partita.vincitori).includes(uid);
+    if (vinto) r.vinte += 1;
+    r.serie = vinto ? (r.serie ?? 0) + 1 : 0;
   }
   return nuova;
 }
@@ -343,3 +345,15 @@ export function aggiungiAllaClassifica(classifica, partita) {
 export const ordinaClassifica = (classifica) => Object.entries(classifica ?? {})
   .map(([uid, r]) => ({ uid, ...r }))
   .sort((a, b) => b.punti - a.punti || b.vinte - a.vinte || a.nome.localeCompare(b.nome));
+
+// Bonus per le vittorie di fila nella stessa stanza: +1 alla terza, +2 alla quarta, +3 dalla quinta.
+export function bonusSerie(punti, classifica, vincitori) {
+  for (const uid of lista(vincitori)) {
+    const fila = (classifica?.[uid]?.serie ?? 0) + 1;
+    if (fila < 3 || !punti[uid]) continue;
+    const p = Math.min(3, fila - 2);
+    punti[uid].voci.push({ m: `${fila} vittorie di fila`, p });
+    punti[uid].totale += p;
+  }
+  return punti;
+}

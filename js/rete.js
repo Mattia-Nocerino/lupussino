@@ -129,7 +129,7 @@ export class Capo extends Db {
   controlla(modifiche, uid) {
     for (const [path, v] of Object.entries(modifiche)) {
       const p = parti(path);
-      const stanza = p[0] === 'rooms' ? leggi(this.albero, `rooms/${p[1]}`) : null;
+      const stanza = ['rooms', 'votes'].includes(p[0]) ? leggi(this.albero, `rooms/${p[1]}`) : null;
       const ok = (
         (p[0] === 'rooms' && p[2] === 'players' && p[3] === uid && stanza
           && (stanza.status !== 'playing' || (stanza.players?.[uid] && (p.length > 4 || v !== null))))
@@ -140,7 +140,8 @@ export class Capo extends Db {
           && String(leggi(this.albero, `rooms/${p[1]}/round`)) === p[2]
           && v?.bersaglio && v.bersaglio !== uid)
       );
-      if (!ok) throw new Error(`Permesso negato: ${path}`);
+      const scaduto = stanza?.fineVoto && Date.now() > stanza.fineVoto + 3000 && (p[0] === 'votes' || p[2] === 'voted');
+      if (!ok || scaduto) throw new Error(scaduto ? 'Tempo scaduto: il voto è chiuso.' : `Permesso negato: ${path}`);
     }
   }
 

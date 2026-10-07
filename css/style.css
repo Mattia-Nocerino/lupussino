@@ -176,3 +176,25 @@ dialog.rete textarea { width: 100%; font: inherit; font-size: .75rem; background
 /* Il cielo è un voto diverso dagli altri: staccato dalla griglia dei giocatori */
 .voti-cielo { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--panel-2); }
 .voti-cielo button { width: 100%; }
+
+/* Titolo e cose volutamente discrete */
+.edizione { font-size: .7rem; font-weight: 600; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; margin-left: 4px; }
+.discreto { text-align: center; font-size: .85rem; margin: 8px 0; }
+.modi { display: flex; flex-direction: column; gap: 6px; font-size: .85rem; color: var(--muted); }
+.modo { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.modo input { width: auto; accent-color: var(--accent); }
+select { font: inherit; border-radius: 10px; border: 1px solid var(--panel-2); padding: 8px 10px; background: var(--panel-2); color: var(--text); }
+dialog.regole { max-height: 85vh; overflow: auto; }
+dialog.regole p { font-size: .9rem; }
+
+/* Timer di discussione: barra sottile che si consuma, rossa e pulsante solo alla fine */
+.timer { position: sticky; top: 0; z-index: 5; height: 28px; margin: 4px 0 12px; border-radius: 99px; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--panel-2); display: flex; align-items: center; justify-content: center; }
+.timer-barra { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(242, 179, 61, .35), rgba(242, 179, 61, .15)); transition: width .5s linear; }
+.timer { position: sticky; }
+.timer-testo { position: relative; font-weight: 700; font-variant-numeric: tabular-nums; font-size: .9rem; }
+.timer.ultimi { border-color: var(--cattivi); animation: timer-pulsa 1.2s ease-in-out infinite; }
+.timer.ultimi .timer-barra { background: rgba(229, 83, 75, .35); }
+.timer.scaduto { border-color: var(--panel-2); color: var(--muted); }
+@keyframes timer-pulsa { 50% { box-shadow: 0 0 0 4px rgba(229, 83, 75, .18); } }
+@media (prefers-reduced-motion: reduce) { .timer.ultimi { animation: none; } }

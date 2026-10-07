@@ -1,7 +1,7 @@
 {
   "name": "Lupussino",
   "short_name": "Lupussino",
-  "description": "Il gioco di bluff da fare in compagnia, anche senza campo.",
+  "description": "Lupussino Next Gen Edition: il gioco di bluff da fare in compagnia, anche senza campo.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

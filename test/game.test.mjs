@@ -178,3 +178,16 @@ test('punteggi: la squadra pesa più dei bonus personali', async () => {
   assert.equal(cl.a.vinte, 2);
   assert.equal(G.ordinaClassifica(cl)[0].punti, 24); // il Mitomane: 12 + 12
 });
+
+test('serie di vittorie e ospiti promossi', async () => {
+  const G = await import('../js/game.js');
+  const punti = { a: { totale: 10, voci: [] }, b: { totale: 10, voci: [] } };
+  G.bonusSerie(punti, { a: { serie: 2 }, b: { serie: 6 } }, ['a', 'b']);
+  assert.equal(punti.a.totale, 11); // terza di fila
+  assert.equal(punti.b.totale, 13); // settima: massimo +3
+  const cl = G.aggiungiAllaClassifica({ a: { nome: 'A', punti: 0, partite: 2, vinte: 2, serie: 2 } }, { punti: { a: { totale: 0 } }, vincitori: [] });
+  assert.equal(cl.a.serie, 0);
+  const partite = [{ ruoli: { o: 'Cittadino' }, ospiti: { o: true }, vincitori: ['o'], giocatori: { o: 'Ospite' }, punti: { o: { totale: 10 } } }];
+  assert.equal(G.classifiche(partite).migliore.length, 0);
+  assert.equal(G.classifiche(partite, { promossi: new Set(['o']) }).migliore[0].uid, 'o');
+});
