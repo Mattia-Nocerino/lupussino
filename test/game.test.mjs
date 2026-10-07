@@ -124,13 +124,31 @@ test('curiosità: ripensamenti, serie di vittorie, mai votato, assassino invisib
     ruoli: { a: 'Cittadino', b: 'Mitomane', c: 'Testimone', d: 'Assassino' },
     vincitori: ['a', 'c'], dettaglio: { a: true, c: true },
     voti: { a: 'd', b: 'c', c: 'd', d: 'c' },
-    cambi: { a: 0, b: 3, c: 1, d: 0 },
+    cambi: { a: 0, b: 5, c: 3, d: 0 }, // Bea è Mitomane: i suoi ripensamenti non contano
   };
   const fatti = curiosita(ora, vecchie, { quante: 10, rng: () => 0 });
   const tutto = fatti.join('\n');
-  assert.match(tutto, /Bea ha cambiato idea 3 volte/);
+  assert.match(tutto, /Carlo ha cambiato idea 3 volte/);
+  assert.doesNotMatch(tutto, /Bea ha cambiato idea/);
   assert.match(tutto, /Anna ha vinto 3 partite di fila/);
   assert.match(tutto, /Nessuno ha mai votato Anna in 3 partite/);
   assert.match(tutto, /Buoni perfetti/);
   assert.ok(curiosita(ora, vecchie, { rng: () => 0 }).length <= 4);
+});
+
+test('le curiosità ignorano i voti dei cattivi', async () => {
+  const G = await import('../js/game.js');
+  const partita = {
+    ruoli: { a: 'Assassino', m: 'Mitomane', c: 'Cittadino', d: 'Cittadina' },
+    voti: { a: 'm', m: 'a', c: 'a', d: 'a' },
+    cambi: { a: 9, c: 0, d: 0 },
+    tempi: {},
+    giocatori: { a: 'A', m: 'M', c: 'C', d: 'D' },
+    dettaglio: { c: true, d: true },
+    vincitori: ['c', 'd'],
+  };
+  const fatti = G.curiosita(partita, [], { quante: 20, rng: () => 0 }).join(' | ');
+  assert.doesNotMatch(fatti, /cambiato idea 9/);
+  assert.doesNotMatch(fatti, /a vicenda/);
+  assert.doesNotMatch(fatti, /Mitomane M si è fatto votare/);
 });

@@ -583,16 +583,17 @@ function vistaRisultato() {
 
 // Banner, ruoli e voti di tutti, curiosità e scarti: uguale online e senza campo.
 function tabellaRisultato(res, nomeDi) {
-  // Una riga per giocatore: emoji del suo ruolo e nome → emoji e nome del giocatore votato.
+  // Una riga per giocatore: emoji del suo ruolo e nome → emoji e nome del giocatore votato (solo per i buoni).
   const chi = (uid) => (uid === G.CIELO ? `<span class="pill cielo">${G.EMOJI_CIELO} Cielo</span>` : pillola(res.ruoli?.[uid], nomeDi(uid)));
   const righe = Object.keys(res.ruoli ?? {}).map((u) => {
     const esito = res.dettaglio?.[u];
     const segno = esito === true ? '<span class="ok">✓</span>' : esito === false ? '<span class="ko">✗</span>' : '';
     const coppa = Object.values(res.vincitori ?? {}).includes(u) ? '🏆' : '';
+    const buono = G.RUOLI[res.ruoli[u]] && G.squadraDi(res.ruoli[u]) === G.BUONI; // i voti dei cattivi non contano: non si mostrano
     return `<li class="voto-riga">
         <div class="voto-chi">${chi(u)}<small>${coppa} ${esc(res.ruoli[u])}</small></div>
-        <span class="freccia">➜</span>
-        <div class="voto-chi">${res.voti?.[u] ? chi(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>
+        ${buono ? `<span class="freccia">➜</span>
+        <div class="voto-chi">${res.voti?.[u] ? chi(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>` : '<span></span><span></span>'}
         <span class="segno">${segno}</span></li>`;
   }).join('');
   return `

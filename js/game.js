@@ -220,16 +220,19 @@ export function curiosita(partita, storico = [], { quante = 4, rng = casuale } =
   const nomi = partita.giocatori ?? {};
   const nome = (u) => nomi[u] ?? '???';
   const uids = Object.keys(partita.ruoli ?? {});
-  const voti = partita.voti ?? {};
+  // contano solo i voti dei buoni: quelli dei cattivi non hanno peso e non si raccontano
+  const buono = (u) => RUOLI[partita.ruoli?.[u]]?.squadra === BUONI;
+  const soloBuoni = (o) => Object.fromEntries(Object.entries(o ?? {}).filter(([u]) => buono(u)));
+  const voti = soloBuoni(partita.voti);
   const fatti = []; // [priorità, frase]
   const aggiungi = (priorita, frase) => fatti.push([priorita + rng() * 0.5, frase]);
 
   // ripensamenti
-  const [indeciso, cambi] = Object.entries(partita.cambi ?? {}).sort((a, b) => b[1] - a[1])[0] ?? [];
+  const [indeciso, cambi] = Object.entries(soloBuoni(partita.cambi)).sort((a, b) => b[1] - a[1])[0] ?? [];
   if (cambi >= 2) aggiungi(3, `${nome(indeciso)} ha cambiato idea ${cambi} volte prima di votare.`);
 
   // tempi di voto
-  const tempi = Object.entries(partita.tempi ?? {}).filter(([u]) => uids.includes(u)).sort((a, b) => a[1] - b[1]);
+  const tempi = Object.entries(soloBuoni(partita.tempi)).filter(([u]) => uids.includes(u)).sort((a, b) => a[1] - b[1]);
   if (tempi.length >= 2) {
     const [lento, ms] = tempi.at(-1);
     if (ms >= 90_000) aggiungi(2, `${nome(lento)} ci ha messo ${Math.floor(ms / 60_000)} min e ${Math.round((ms % 60_000) / 1000)} s per votare.`);
@@ -270,7 +273,7 @@ export function curiosita(partita, storico = [], { quante = 4, rng = casuale } =
     for (let i = sue.length - 1; i >= 0 && lista(sue[i].vincitori).includes(u) === vintaUltima; i--) serie++;
     if (vintaUltima && serie >= 3) aggiungi(4, `${nome(u)} ha vinto ${serie} partite di fila! 🔥`);
     if (!vintaUltima && serie >= 4) aggiungi(2, `${nome(u)} ha perso ${serie} partite di fila. Coraggio!`);
-    const maiVotato = sue.every((p) => !Object.values(p.voti ?? {}).includes(u));
+    const maiVotato = sue.every((p) => !Object.entries(p.voti ?? {}).some(([chi, b]) => b === u && RUOLI[p.ruoli?.[chi]]?.squadra === BUONI));
     if (sue.length >= 3 && maiVotato) aggiungi(3, `Nessuno ha mai votato ${nome(u)} in ${sue.length} partite. 😇`);
     const ruolo = partita.ruoli[u];
     if ((ruolo === 'Assassino' || ruolo === 'Mitomane') && lista(partita.vincitori).includes(u)
