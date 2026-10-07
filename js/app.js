@@ -132,7 +132,7 @@ function ascoltaStanze() {
   unsubStanze = onValue(q, (snap) => {
     const stanze = [];
     snap.forEach((c) => { stanze.push({ id: c.key, ...c.val() }); });
-    S.stanze = stanze.filter((r) => r.status !== 'playing').reverse();
+    S.stanze = stanze.reverse(); // anche quelle in corso: chi è uscito a metà partita deve poter rientrare
     // aggiorna solo la lista, così non si perde quello che l'utente sta scrivendo nei campi
     const $lista = document.getElementById('lista-stanze');
     if ($lista && !S.room) $lista.innerHTML = listaStanze();
@@ -222,7 +222,7 @@ async function esciDallaStanza() {
   const { room } = S;
   const uid = S.user.uid;
   if (room.status === 'playing' && room.inGioco?.[uid]) {
-    if (!confirm('La partita è in corso: se esci gli altri non potranno finire il voto. Uscire comunque?')) return;
+    if (!confirm('La partita è in corso: se esci gli altri non potranno finire il voto finché non rientri (la stanza resta nella lista). Uscire comunque?')) return;
     return lasciaLocalmente(); // resti tra i giocatori del round: potrai rientrare dalla stessa pagina
   }
   if (S.rete?.capo) {
@@ -480,9 +480,13 @@ const vistaLogin = () => `
 function listaStanze() {
   const stanze = S.stanze.map((r) => {
     const n = Object.keys(r.players ?? {}).length;
-    const stato = r.status === 'ended' ? 'tra una partita e l\'altra' : 'in attesa';
-    return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${n}/${G.MAX_GIOCATORI} · ${stato}</span></div>
-      <button data-action="entra" data-id="${esc(r.id)}" ${n >= G.MAX_GIOCATORI ? 'disabled' : ''}>Entra</button></li>`;
+    const dentro = !!r.players?.[S.user?.uid];
+    const stato = { playing: 'partita in corso', ended: 'tra una partita e l\'altra' }[r.status] ?? 'in attesa';
+    const bottone = dentro
+      ? `<button class="primary" data-action="entra" data-id="${esc(r.id)}">Rientra</button>`
+      : `<button data-action="entra" data-id="${esc(r.id)}" ${n >= G.MAX_GIOCATORI || r.status === 'playing' ? 'disabled' : ''}>Entra</button>`;
+    return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${n}/${G.MAX_GIOCATORI} · ${stato}${dentro ? ' · ci sei dentro' : ''}</span></div>
+      ${bottone}</li>`;
   }).join('');
   return stanze ? `<ul class="list">${stanze}</ul>` : '<p class="muted">Nessuna stanza aperta. Creane una!</p>';
 }
@@ -595,7 +599,8 @@ function vistaPartita() {
     </section>
     ${classificaStanza(r.classifica, { aperta: false })}
     ${pannelloGiocatori()}
-    ${bottoneTelefoni()}`;
+    ${bottoneTelefoni()}
+    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
 }
 
 function vistaRisultato() {
@@ -1173,7 +1178,10 @@ document.addEventListener('click', (e) => {
   const azioni = {
     login: () => tenta(login),
     ospite: () => tenta(() => signInAnonymously(auth)),
-    logout: () => tenta(() => signOut(auth)),
+    logout: () => {
+      if (S.user?.isAnonymous && !confirm('Sei entrato come ospite: uscendo perdi questo profilo e non potrai rientrare nelle stanze dove sei. Uscire comunque?')) return;
+      tenta(() => signOut(auth));
+    },
     entra: () => tenta(() => entraInStanza(id)),
     esci: () => tenta(esciDallaStanza),
     rimuovi: () => tenta(() => rimuoviGiocatore(uid)),
