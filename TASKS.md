@@ -23,7 +23,6 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ⬜ Pulizia stanze abbandonate (es. bottone "chiudi stanza" + filtro stanze più vecchie di 24h)
 - ⬜ Codice stanza breve da dettare a voce o QR code, invece di cercarla nella lista
 - ⬜ Timer opzionale di discussione prima del voto
-- ⬜ PWA (icona sulla home, schermo sempre acceso durante la partita con Wake Lock)
 
 ## Fase 3: classifiche e curiosità
 - ✅ Pagina "Classifiche" calcolata da `games/`: miglior giocatore, miglior assassino, miglior mitomane, fiuto migliore, peggior giocatore (% voti sbagliati da buono, minimo 3 voti)
@@ -35,8 +34,10 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ❓ Classifica globale o per gruppo di amici/stanza? Per stagione/mese?
 
 ## Fase 5: senza internet
-- ⬜ Rendere l'app installabile e utilizzabile offline (PWA con service worker)
-- ⬜ Modalità "un solo telefono": il telefono passa di mano, ognuno guarda la sua carta e vota di nascosto; nessuna rete necessaria
+- ✅ App installabile e utilizzabile offline (PWA con service worker)
+- ✅ Modalità "un solo telefono": il telefono passa di mano, ognuno guarda la sua carta e vota di nascosto; nessuna rete necessaria
+- ✅ Partite senza campo salvate sul telefono e caricate in `games/` al ritorno di internet (contano per classifiche e curiosità)
+- ⬜ Schermo sempre acceso durante la partita (Wake Lock)
 - ❓ Alternativa multi-telefono: hotspot di un telefono + collegamento diretto WebRTC con QR code (complesso, da valutare)
 
 ## Fase 4: punteggi, moltiplicatori e bonus (proposte da scegliere)

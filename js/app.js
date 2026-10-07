@@ -9,6 +9,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js';
 import { firebaseConfig } from './firebase-config.js';
 import * as G from './game.js';
+import * as O from './offline.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -39,6 +40,7 @@ const S = {
   cambi: 0,          // quante volte hai cambiato scelta prima di confermare (per le curiosità)
   vista: null,       // 'classifica' quando sei fuori dalle stanze
   calcolando: false,
+  off: O.partitaSalvata(), // partita senza campo in corso (un solo telefono), sopravvive ai ricaricamenti
 };
 let unsubStanze = null;
 let unsubRoom = null;
@@ -82,11 +84,16 @@ onAuthStateChanged(auth, async (user) => {
     return render();
   }
   S.nome = localStorage.getItem('lupussino.nome') || user.displayName || `Ospite ${user.uid.slice(0, 4)}`;
-  await tenta(() => update(ref(db, `users/${user.uid}`), { nome: S.nome, ultimoAccesso: serverTimestamp() }));
+  render(); // senza campo le operazioni sotto restano in attesa: intanto la pagina deve funzionare
+  tenta(() => update(ref(db, `users/${user.uid}`), { nome: S.nome, ultimoAccesso: serverTimestamp() }));
   ascoltaStanze();
   const salvata = localStorage.getItem('lupussino.room');
-  if (salvata) await tenta(() => entraInStanza(salvata, { soloSeGiaDentro: true }));
+  if (salvata && navigator.onLine) await tenta(() => entraInStanza(salvata, { soloSeGiaDentro: true }));
   render();
+  if (navigator.onLine) {
+    sincronizza();
+    leggiPartite().then((p) => O.ricordaPartite(p, { uid: user.uid, nome: S.nome, ospite: user.isAnonymous })).catch(() => {});
+  }
 });
 
 async function login() {
@@ -378,7 +385,14 @@ async function apriClassifica() {
   S.vista = 'classifica';
   S.classifiche = null;
   render();
-  S.classifiche = G.classifiche(await leggiPartite());
+  let partite;
+  S.classificheLocali = !navigator.onLine;
+  if (navigator.onLine) {
+    partite = await leggiPartite().catch(() => null);
+    if (partite) O.ricordaPartite(partite, { uid: S.user.uid, nome: S.nome, ospite: S.user.isAnonymous });
+  }
+  if (!partite) { partite = O.storico(); S.classificheLocali = true; }
+  S.classifiche = G.classifiche(partite);
   render();
 }
 
@@ -389,6 +403,12 @@ async function nuovaPartita() {
 // ---------- viste ----------
 
 function render() {
+  if (S.off) {
+    $utente.innerHTML = '<span>📴 Senza campo</span>';
+    $app.innerHTML = vistaOffline();
+    if (S.off.fase === 'fine') festeggia(S.off.id, S.off.result, nomiVincitori(S.off.result, (u) => S.off.giocatori[u]));
+    return;
+  }
   $utente.innerHTML = S.user
     ? `<span>${esc(S.nome)}</span><button class="link" data-action="logout">Esci</button>`
     : '';
@@ -397,7 +417,10 @@ function render() {
   if (!S.room) return ($app.innerHTML = vistaHome());
   const viste = { lobby: vistaLobby, playing: vistaPartita, ended: vistaRisultato };
   $app.innerHTML = viste[S.room.status]?.() ?? '';
-  if (S.room.status === 'ended' && S.room.result) festeggia();
+  if (S.room.status === 'ended' && S.room.result) {
+    const io = Object.values(S.room.result.vincitori ?? {}).includes(S.user.uid);
+    festeggia(`${S.roomId}/${S.room.round}`, S.room.result, S.room.result.vincitore === G.PAREGGIO ? 'Non vince nessuno' : io ? 'Hai vinto 🎉' : 'Hai perso');
+  }
 }
 
 const vistaLogin = () => `
@@ -406,7 +429,8 @@ const vistaLogin = () => `
     <button class="primary full" data-action="login">Entra con Google</button>
     <button class="full" data-action="ospite">Entra come ospite</button>
     <p class="muted">Gli ospiti non finiscono in classifica e perdono il profilo se cancellano i dati del browser.</p>
-  </section>`;
+  </section>
+  ${bottoneOffline()}`;
 
 function listaStanze() {
   const stanze = S.stanze.map((r) => {
@@ -435,11 +459,14 @@ function vistaClassifica() {
     ${blocco('🤡 Miglior mitomane', 'Vittorie da Mitomane', c.mitomane, (s) => `${s.vinteMitomane} <small>su ${s.giocateMitomane}</small>`)}
     ${blocco('🎯 Fiuto migliore', 'Voti giusti da buono (almeno 3 voti)', c.fiuto, (s) => `${s.percGiusti}% <small>di ${s.votiDaBuono}</small>`)}
     ${blocco('🙈 Peggior giocatore', 'Voti sbagliati da buono (almeno 3 voti)', c.peggiore, (s) => `${s.percSbagliati}% <small>di ${s.votiDaBuono}</small>`)}
-    <p class="muted">Gli ospiti non entrano in classifica: per comparire entra con Google.</p>`;
+    <p class="muted">Gli ospiti non entrano in classifica: per comparire entra con Google.</p>
+    ${S.classificheLocali ? '<p class="muted">📴 Sei senza campo: classifiche calcolate con le partite salvate su questo telefono.</p>' : ''}`;
 }
 
 function vistaHome() {
   return `
+    ${navigator.onLine ? '' : '<p class="panel">📴 Sei senza campo: le stanze online torneranno con internet. Intanto potete giocare con un solo telefono.</p>'}
+    ${bottoneOffline()}
     <button class="full" data-action="classifica">🏆 Classifiche</button>
     <section class="panel stack">
       <label class="muted" for="nome">Il tuo nome</label>
@@ -523,6 +550,18 @@ function vistaRisultato() {
   const r = S.room;
   const res = r.result;
   if (!res) return '<p class="muted">Calcolo del risultato…</p>';
+  return `
+    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
+    ${tabellaRisultato(res, nomeDi)}
+    ${sonoHost()
+    ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
+    : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
+    ${pannelloGiocatori()}
+    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+}
+
+// Banner, ruoli e voti di tutti, curiosità e scarti: uguale online e senza campo.
+function tabellaRisultato(res, nomeDi) {
   // Una riga per giocatore: pillola col colore del suo ruolo → pillola del giocatore votato.
   const pillola = (uid) => {
     if (uid === G.CIELO) return '<span class="pill cielo">☁️ Cielo</span>';
@@ -540,18 +579,12 @@ function vistaRisultato() {
         <span class="segno">${segno}</span></li>`;
   }).join('');
   return `
-    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
     <div class="banner ${res.vincitore}">${res.vincitore === G.PAREGGIO ? 'Pareggio: non vince nessuno' : `Vincono i ${res.vincitore}!`}</div>
     <p class="muted" style="text-align:center">Voti dei buoni: ${res.giusti} giusti, ${res.sbagliati} sbagliati${res.votiMitomane ? ` (di cui ${res.votiMitomane} al Mitomane)` : ''}</p>
     <section class="panel"><ul class="list">${righe}</ul></section>
     ${Object.values(res.fatti ?? {}).length ? `<h2>💡 Lo sapevi?</h2><section class="panel"><ul class="fatti">${Object.values(res.fatti).map((f) => `<li>${esc(f)}</li>`).join('')}</ul></section>` : ''}
     ${Object.values(res.ruoli ?? {}).some(G.isAssassino) ? '' : '<p class="muted" style="text-align:center">Non c\'erano assassini in gioco: il voto giusto era il cielo.</p>'}
-    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => `<span class="pill piccola" style="${stileRuolo(c)}">${esc(c)}</span>`).join(' ')}</p>
-    ${sonoHost()
-    ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
-    : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
-    ${pannelloGiocatori()}
-    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+    <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => `<span class="pill piccola" style="${stileRuolo(c)}">${esc(c)}</span>`).join(' ')}</p>`;
 }
 
 // Mazzo del round (o quello che uscirebbe col numero attuale di giocatori), raggruppato per ruolo.
@@ -560,15 +593,22 @@ function bottoneMazzo() {
 }
 
 function apriMazzo() {
+  if (S.off) {
+    const n = S.off.fase === 'setup' ? Object.keys(S.off.giocatori).length : S.off.ordine.length;
+    return mostraMazzo(n, S.off.fase === 'setup' ? `Con ${n} giocatori il mazzo sarebbe` : `Mazzo di questa partita (${n} giocatori)`);
+  }
   const r = S.room;
   const n = r.status === 'lobby' ? Object.keys(r.players ?? {}).length : (r.nGiocatori ?? Object.keys(r.inGioco ?? {}).length);
+  mostraMazzo(n, r.status === 'lobby' ? `Con ${n} giocatori il mazzo sarebbe` : `Mazzo di questo round (${n} giocatori)`);
+}
+
+function mostraMazzo(n, titolo) {
   const mazzo = G.CONFIGURAZIONI[n];
   const conta = {};
   for (const c of mazzo ?? []) conta[c] = (conta[c] ?? 0) + 1;
   const righe = Object.entries(conta).map(([ruolo, k]) => `<li>
       <span class="pill" style="${stileRuolo(ruolo)}">${esc(ruolo)}</span>
       <span class="${G.squadraDi(ruolo) === G.BUONI ? 'ok' : 'ko'}">${k > 1 ? `×${k} · ` : ''}${G.squadraDi(ruolo)}</span></li>`).join('');
-  const titolo = r.status === 'lobby' ? `Con ${n} giocatori il mazzo sarebbe` : `Mazzo di questo round (${n} giocatori)`;
   const $d = document.createElement('dialog');
   $d.className = 'mazzo';
   $d.innerHTML = mazzo
@@ -583,19 +623,16 @@ function apriMazzo() {
 }
 
 // Animazione a schermo intero sulla squadra vincente, una volta per round.
-function festeggia() {
-  const chiave = `${S.roomId}/${S.room.round}`;
+function festeggia(chiave, result, sotto) {
   if (festeggia.fatto === chiave) return;
   festeggia.fatto = chiave;
-  const { vincitore } = S.room.result;
+  const { vincitore } = result;
   const testi = {
     [G.BUONI]: ['Vincono i buoni!', '⚖️'],
     [G.CATTIVI]: ['Vincono i cattivi!', '🔪'],
     [G.PAREGGIO]: ['Pareggio!', '🤝'],
   };
   const [testo, emoji] = testi[vincitore] ?? ['Fine partita', '🎲'];
-  const io = Object.values(S.room.result.vincitori ?? {}).includes(S.user.uid);
-  const sotto = vincitore === G.PAREGGIO ? 'Non vince nessuno' : io ? 'Hai vinto 🎉' : 'Hai perso';
   const $festa = document.createElement('div');
   $festa.className = `festa ${vincitore}`;
   const pioggia = Array.from({ length: 24 }, () =>
@@ -606,12 +643,261 @@ function festeggia() {
   document.body.append($festa);
 }
 
+// ---------- senza campo: un solo telefono che passa di mano ----------
+// Niente rete: il telefono mescola, ognuno guarda la sua carta e vota di nascosto, poi il risultato.
+// Le partite finite restano in coda sul telefono e vanno nel database appena torna internet.
+
+const bottoneOffline = () => '<button class="full" data-action="off-apri">📴 Partita senza campo (un solo telefono)</button>';
+const nomiVincitori = (res, nome) => (res.vincitore === G.PAREGGIO ? 'Non vince nessuno'
+  : Object.values(res.vincitori ?? {}).map((u) => esc(nome(u))).join(', ') || 'Nessuno a cui dare i punti');
+
+function salvaOff() { O.salvaPartita(S.off); render(); }
+
+function apriOffline() {
+  const giocatori = {};
+  const ospiti = {};
+  for (const g of O.ultimi()) { giocatori[g.id] = g.nome; if (g.ospite) ospiti[g.id] = true; }
+  if (S.user && !giocatori[S.user.uid] && Object.keys(giocatori).length < G.MAX_GIOCATORI) {
+    giocatori[S.user.uid] = S.nome;
+    if (S.user.isAnonymous) ospiti[S.user.uid] = true;
+  }
+  S.off = { fase: 'setup', giocatori, ospiti };
+  salvaOff();
+}
+
+function chiudiOffline() {
+  if (!['setup', 'fine'].includes(S.off.fase) && !confirm('Interrompere la partita senza campo? Non verrà salvata.')) return;
+  S.off = null;
+  O.salvaPartita(null);
+  render();
+}
+
+function aggiungiOff(id, nome) {
+  const o = S.off;
+  if (Object.keys(o.giocatori).length >= G.MAX_GIOCATORI) return toast(`Massimo ${G.MAX_GIOCATORI} giocatori.`);
+  nome = nome.trim().slice(0, 20);
+  if (!nome) return;
+  if (Object.values(o.giocatori).some((n) => n.toLowerCase() === nome.toLowerCase())) return toast(`C'è già un giocatore di nome ${nome}.`);
+  if (!id) { id = O.nuovoId('ospite'); o.ospiti[id] = true; } // nome nuovo: ospite, fuori classifica
+  o.giocatori[id] = nome;
+  salvaOff();
+}
+
+function togliOff(id) {
+  delete S.off.giocatori[id];
+  delete S.off.ospiti[id];
+  salvaOff();
+}
+
+function distribuisciOff() {
+  const o = S.off;
+  const ordine = G.mescola(Object.keys(o.giocatori)); // anche l'ordine di passaggio è casuale
+  if (!G.puoIniziare(ordine.length)) return toast(`Servono da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.`);
+  O.salvaUltimi(ordine.map((id) => ({ id, nome: o.giocatori[id], ospite: !!o.ospiti[id] })));
+  const { assegnazioni, scarti } = G.distribuisci(ordine);
+  Object.assign(o, {
+    id: O.nuovoId('offline'), fase: 'carte', ordine, assegnazioni, scarti,
+    mani: G.informazioni(assegnazioni, scarti, o.giocatori),
+    indice: 0, mostra: false, voti: {}, cambi: {}, tempi: {}, scelta: null, cambiOra: 0,
+    iniziatoIl: Date.now(), result: null, sincronizzata: false,
+  });
+  salvaOff();
+}
+
+// "Sono X": il giocatore di turno ha il telefono in mano.
+function eccomiOff() { S.off.mostra = true; S.off.sceltaOra = Date.now(); salvaOff(); }
+
+function passaOff() {
+  const o = S.off;
+  o.mostra = false;
+  if (o.indice < o.ordine.length - 1) o.indice++;
+  else Object.assign(o, { fase: 'discussione', indice: 0 });
+  salvaOff();
+}
+
+function sbirciaOff(id) {
+  Object.assign(S.off, { fase: 'sbircia', chi: id, mostra: false });
+  salvaOff();
+}
+
+function scegliOff(bersaglio) {
+  const o = S.off;
+  if (o.scelta === bersaglio) return;
+  if (o.scelta) o.cambiOra++;
+  o.scelta = bersaglio;
+  salvaOff();
+}
+
+function votaOff() {
+  const o = S.off;
+  const chi = o.ordine[o.indice];
+  if (!o.scelta) return;
+  o.voti[chi] = o.scelta;
+  o.cambi[chi] = o.cambiOra;
+  o.tempi[chi] = Date.now() - o.sceltaOra; // tempo passato col telefono in mano prima di confermare
+  Object.assign(o, { scelta: null, cambiOra: 0, mostra: false });
+  if (o.indice < o.ordine.length - 1) { o.indice++; return salvaOff(); }
+  concludiOff();
+}
+
+function concludiOff() {
+  const o = S.off;
+  const esito = G.esitoVoto(o.assegnazioni, o.voti);
+  const ospiti = Object.fromEntries(o.ordine.filter((u) => o.ospiti[u]).map((u) => [u, true]));
+  const partita = {
+    roomId: 'offline', round: 1, offline: true,
+    ...esito, ruoli: o.assegnazioni, scarti: o.scarti, voti: o.voti, cambi: o.cambi, tempi: o.tempi, ospiti,
+    giocatori: Object.fromEntries(o.ordine.map((u) => [u, o.giocatori[u]])), finitaIl: Date.now(),
+  };
+  o.result = { ...partita, fatti: G.curiosita(partita, O.storico()) };
+  o.fase = 'fine';
+  O.accoda(o.id, partita);
+  salvaOff();
+  sincronizza();
+}
+
+function vistaOffline() {
+  const o = S.off;
+  const nome = (u) => (u === G.CIELO ? '☁️ Cielo' : o.giocatori[u] ?? '???');
+  const testa = (titolo) => `<div class="titolo-riga"><h2>${titolo}</h2>${bottoneMazzo()}</div>`;
+  const esci = `<p><button class="link" data-action="off-chiudi">${o.fase === 'fine' || o.fase === 'setup' ? 'Torna alla home' : 'Interrompi la partita'}</button></p>`;
+  const carta = (u) => {
+    const m = o.mani[u];
+    return `<div class="carta scoperta ${m.squadra}">
+        <div class="ruolo pill grande" style="${stileRuolo(m.ruolo)}">${esc(m.ruolo)}</div>
+        <div class="squadra">${m.squadra}</div>
+        <div>${esc(m.info)}</div>
+      </div>`;
+  };
+  const passa = (u, azione, testo) => `
+    <section class="panel passa">
+      <p class="muted">Passa il telefono a</p>
+      <p class="passa-nome">${esc(nome(u))}</p>
+      <p class="muted">Gli altri non guardano!</p>
+    </section>
+    <button class="primary full" data-action="${azione}">Sono ${esc(nome(u))}: ${testo}</button>`;
+
+  if (o.fase === 'setup') {
+    const dentro = Object.keys(o.giocatori);
+    const n = dentro.length;
+    const conosciuti = Object.entries({ ...O.amici(), ...Object.fromEntries(O.ultimi().map((g) => [g.id, g.nome])) })
+      .filter(([id, nm]) => !o.giocatori[id] && !dentro.some((d) => o.giocatori[d].toLowerCase() === String(nm).toLowerCase()))
+      .sort((a, b) => a[1].localeCompare(b[1]));
+    return `
+      ${testa('📴 Partita senza campo')}
+      <p class="muted">Un solo telefono: passa di mano per guardare le carte e per votare. Non serve internet.</p>
+      <section class="panel">
+        <p class="muted">Giocatori ${n}/${G.MAX_GIOCATORI} · carte in gioco ${n + G.CARTE_EXTRA}</p>
+        ${n ? `<ul class="list">${dentro.map((u) => `<li><span>${esc(o.giocatori[u])}${o.ospiti[u] ? ' <span class="tag">ospite</span>' : ''}</span>
+          <button class="link" data-action="off-togli" data-uid="${esc(u)}">togli</button></li>`).join('')}</ul>` : '<p class="muted">Aggiungi i giocatori.</p>'}
+      </section>
+      ${conosciuti.length ? `<h2>Amici già visti</h2><section class="panel chips">${conosciuti.map(([id, nm]) =>
+        `<button data-action="off-aggiungi" data-uid="${esc(id)}" data-nome="${esc(nm)}">+ ${esc(nm)}</button>`).join('')}</section>` : ''}
+      <form data-form="off-nuovo" class="panel row"><input name="nome" placeholder="Nuovo giocatore" maxlength="20" required><button>Aggiungi</button></form>
+      <p class="muted">Gli amici già visti online finiscono in classifica quando la partita viene caricata; i nomi nuovi contano come ospiti.</p>
+      <button class="primary full" data-action="off-via" ${G.puoIniziare(n) ? '' : 'disabled'}>Distribuisci le carte</button>
+      ${esci}`;
+  }
+
+  if (o.fase === 'carte') {
+    const u = o.ordine[o.indice];
+    const ultimo = o.indice === o.ordine.length - 1;
+    return `
+      ${testa(`Carte · ${o.indice + 1}/${o.ordine.length}`)}
+      ${o.mostra
+    ? `${carta(u)}<button class="primary full" data-action="off-passa">${ultimo ? 'Fatto: copri e inizia la discussione' : `Fatto: copri e passa a ${esc(nome(o.ordine[o.indice + 1]))}`}</button>`
+    : passa(u, 'off-eccomi', 'mostra la mia carta')}
+      ${esci}`;
+  }
+
+  if (o.fase === 'sbircia') {
+    return `
+      ${testa('Rivedi la carta')}
+      ${o.mostra ? `${carta(o.chi)}<button class="primary full" data-action="off-discuti">Fatto: copri</button>`
+    : `${passa(o.chi, 'off-eccomi', 'mostra la mia carta')}<button class="full" data-action="off-discuti">Annulla</button>`}`;
+  }
+
+  if (o.fase === 'discussione') {
+    return `
+      ${testa('🗣️ Discussione')}
+      <section class="panel stack">
+        <p>Tutti hanno visto la propria carta. Discutete, accusate, bluffate: quando siete pronti si vota, sempre passando il telefono.</p>
+        <p class="muted">Primo a votare: <strong>${esc(nome(o.ordine[0]))}</strong>.</p>
+      </section>
+      <button class="primary full" data-action="off-vota">Inizia il voto</button>
+      <h2>Qualcuno ha dimenticato la carta?</h2>
+      <section class="panel chips">${o.ordine.map((u) => `<button data-action="off-sbircia" data-uid="${esc(u)}">👁 ${esc(nome(u))}</button>`).join('')}</section>
+      ${esci}`;
+  }
+
+  if (o.fase === 'voto') {
+    const u = o.ordine[o.indice];
+    if (!o.mostra) return `${testa(`Voto · ${o.indice + 1}/${o.ordine.length}`)}${passa(u, 'off-eccomi', 'voglio votare')}${esci}`;
+    const bottone = (b, testo) => `<button data-action="off-scegli" data-uid="${esc(b)}" class="${o.scelta === b ? 'scelto' : ''}">${testo}</button>`;
+    return `
+      ${testa(`Vota, ${esc(nome(u))}`)}
+      <section class="panel stack">
+        <div class="voti">
+          ${o.ordine.filter((b) => b !== u).map((b) => bottone(b, esc(nome(b)))).join('')}
+          ${bottone(G.CIELO, '☁️ Cielo')}
+        </div>
+        <button class="primary full" data-action="off-conferma" ${o.scelta ? '' : 'disabled'}>
+          ${o.scelta ? `Conferma voto: ${esc(nome(o.scelta))}` : 'Scegli chi votare'}</button>
+      </section>
+      <p class="muted">Dopo la conferma lo schermo si copre e il voto non si vede più.</p>`;
+  }
+
+  // fine
+  const caricata = !O.coda()[o.id];
+  return `
+    ${testa('📴 Fine partita')}
+    ${tabellaRisultato(o.result, nome)}
+    <p class="muted">${caricata ? '✅ Partita caricata online: conta per classifiche e curiosità.'
+    : '💾 Partita salvata sul telefono: verrà caricata online appena torna internet (con il login fatto).'}</p>
+    <button class="primary full" data-action="off-via">Nuova partita, stessi giocatori</button>
+    <button class="full" data-action="off-setup">Cambia giocatori</button>
+    ${esci}`;
+}
+
+// Carica nel database le partite finite senza campo. Parte all'avvio, al ritorno della rete e a fine partita.
+async function sincronizza() {
+  const coda = Object.entries(O.coda());
+  if (sincronizza.attiva || !S.user || !navigator.onLine || !coda.length) return;
+  sincronizza.attiva = true;
+  let fatte = 0;
+  try {
+    for (const [id, partita] of coda) {
+      try {
+        await set(ref(db, `games/${id}`), { ...partita, hostUid: S.user.uid });
+      } catch (e) {
+        // già caricata da un tentativo precedente (le regole permettono una sola scrittura)? allora è a posto
+        if (!(await get(ref(db, `games/${id}`)).catch(() => null))?.exists()) { console.warn('sincronizzazione', id, e); continue; }
+      }
+      O.togliDallaCoda(id);
+      fatte++;
+    }
+  } finally {
+    sincronizza.attiva = false;
+  }
+  if (fatte) {
+    toast(fatte === 1 ? 'Caricata online la partita giocata senza campo ✅' : `Caricate online ${fatte} partite giocate senza campo ✅`);
+    render();
+  }
+}
+
+window.addEventListener('online', () => { sincronizza(); render(); });
+window.addEventListener('offline', () => render());
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker', e));
+}
+
 // ---------- eventi ----------
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  const { action, id, uid } = el.dataset;
+  const { action, id, uid, nome } = el.dataset;
   const azioni = {
     login: () => tenta(login),
     ospite: () => tenta(() => signInAnonymously(auth)),
@@ -627,6 +913,19 @@ document.addEventListener('click', (e) => {
     classifica: () => tenta(apriClassifica),
     indietro: () => { S.vista = null; render(); },
     nuova: () => tenta(nuovaPartita),
+    'off-apri': apriOffline,
+    'off-chiudi': chiudiOffline,
+    'off-aggiungi': () => aggiungiOff(uid, nome),
+    'off-togli': () => togliOff(uid),
+    'off-via': distribuisciOff,
+    'off-setup': () => { S.off = { fase: 'setup', giocatori: S.off.giocatori, ospiti: S.off.ospiti }; salvaOff(); },
+    'off-eccomi': eccomiOff,
+    'off-passa': passaOff,
+    'off-sbircia': () => sbirciaOff(uid),
+    'off-discuti': () => { Object.assign(S.off, { fase: 'discussione', mostra: false }); salvaOff(); },
+    'off-vota': () => { Object.assign(S.off, { fase: 'voto', indice: 0, mostra: false }); salvaOff(); },
+    'off-scegli': () => scegliOff(uid),
+    'off-conferma': votaOff,
   };
   azioni[action]?.();
 });
@@ -638,9 +937,11 @@ document.addEventListener('submit', (e) => {
   const valore = new FormData(form).get('nome') ?? '';
   if (form.dataset.form === 'nome') tenta(() => salvaNome(valore));
   if (form.dataset.form === 'crea') tenta(() => creaStanza(valore));
+  if (form.dataset.form === 'off-nuovo') aggiungiOff(null, valore);
 });
 
 // Se il telefono va in background o si cambia app, la carta si ricopre da sola.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && !S.coperta) { S.coperta = true; render(); }
+  if (document.hidden && S.off?.mostra) { S.off.mostra = false; salvaOff(); }
 });

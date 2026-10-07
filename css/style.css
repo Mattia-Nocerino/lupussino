@@ -154,3 +154,13 @@ ol.classifica li:first-child span { color: var(--accent); font-weight: 700; }
 ol.classifica small { color: var(--muted); font-weight: 400; }
 ul.fatti { margin: 0; padding-left: 1.2em; }
 ul.fatti li + li { margin-top: 6px; }
+
+/* Senza campo: il telefono passa di mano */
+.passa { text-align: center; padding: 28px 16px; }
+.passa p { margin: 4px 0; }
+.passa-nome { font-size: 2rem; font-weight: 800; color: var(--accent); overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* App installata: rispetta notch e barra dei gesti */
+.topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+main { padding-bottom: max(16px, env(safe-area-inset-bottom)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }

@@ -10,6 +10,8 @@ si pubblica su GitHub Pages e basta.
 | `index.html`, `css/style.css` | pagina e stile (mobile first) |
 | `js/game.js` | logica pura: configurazioni, distribuzione, informazioni per ruolo, calcolo del vincitore |
 | `js/app.js` | interfaccia, login, stanze, partita in tempo reale sul Realtime Database, presenza online |
+| `js/offline.js` | archivio sul telefono per giocare senza campo: amici, storico, partite da caricare |
+| `sw.js`, `manifest.webmanifest`, `icons/` | app installabile (PWA) che si apre anche senza internet |
 | `js/firebase-config.js` | **da compilare** con la config del tuo progetto Firebase |
 | `database.rules.json` | regole di sicurezza del Realtime Database |
 | `firebase.json` | config per pubblicare le regole e usare gli emulatori |
@@ -65,3 +67,15 @@ Dati nel Realtime Database:
 Scelta consapevole: senza backend il capo stanza "fa da server", quindi con gli strumenti del browser da computer potrebbe sbirciare le carte altrui. Giocando da telefono non è un problema.
 
 Limite noto: le regole del Realtime Database non sanno contare i figli di un nodo, quindi il massimo di 9 giocatori per stanza è controllato dall'app e non dalle regole.
+
+## Senza campo
+
+1. Apri il sito **almeno una volta con internet** (meglio se fai anche il login): il service worker salva i file sul telefono.
+2. Installala: Android/Chrome menu ⋮ → **Installa app**; iPhone/Safari Condividi → **Aggiungi alla schermata Home**.
+3. Senza campo apri l'app e premi **📴 Partita senza campo**: un solo telefono che passa di mano.
+   Ognuno preme "Sono X" per vedere la propria carta, poi si discute e si vota allo stesso modo, di nascosto.
+4. Le partite finite restano sul telefono (`localStorage`) e vengono scritte in `games/` appena torna internet,
+   con il login del proprietario del telefono come `hostUid`. Gli amici già visti online contano in classifica;
+   i nomi nuovi aggiunti al momento sono ospiti.
+
+Le classifiche senza campo si calcolano con le partite salvate sul telefono.
