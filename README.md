@@ -52,8 +52,8 @@ Dati nel Realtime Database:
 | `rooms/{id}` | tutti i loggati | nome, capo stanza, stato `lobby → playing → ended`, round, giocatori (con `online`), chi ha votato, risultato |
 | `hands/{id}/{round}/{uid}` | solo quel giocatore (e il capo stanza) | la tua carta e le tue informazioni |
 | `secret/{id}/{round}` | solo il capo stanza | mazzo completo e scarti |
-| `votes/{id}/{round}/{uid}` | quel giocatore e il capo stanza | il voto, scrivibile una volta sola |
-| `games/{id}_{round}` | tutti i loggati | storico partite, base per la classifica |
+| `votes/{id}/{round}/{uid}` | quel giocatore e il capo stanza | `{bersaglio, cambi, at}`: il voto (scrivibile una volta sola), i ripensamenti e l'ora |
+| `games/{id}_{round}` | tutti i loggati | storico partite: ruoli, voti, vincitori, ripensamenti, tempi; base di classifiche e curiosità |
 
 - **Avvio**: il browser del capo stanza mescola il mazzo e scrive carte, mazzo e stato della stanza in un'unica scrittura atomica.
 - **Voto**: ognuno scrive il proprio voto e segna `voted/{uid}`: tutti vedono chi manca, non per chi.

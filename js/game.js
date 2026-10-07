@@ -152,3 +152,131 @@ export function esitoVoto(assegnazioni, voti) {
   const vincitori = Object.keys(assegnazioni).filter((u) => squadraDi(assegnazioni[u]) === vincitore); // vuoto se pareggio
   return { vincitore, vincitori, giusti, sbagliati, votiMitomane, dettaglio };
 }
+
+// ---------- classifiche ----------
+
+// Le partite salvate in games/ hanno: giocatori {uid: nome}, ospiti {uid: true}, ruoli {uid: ruolo},
+// voti {uid: bersaglio}, dettaglio {uid: true|false} (solo buoni), vincitore, vincitori [uid], finitaIl.
+const lista = (x) => Object.values(x ?? {});
+
+export function statistiche(partite) {
+  const st = {};
+  const ordinate = [...partite].sort((a, b) => (a.finitaIl ?? 0) - (b.finitaIl ?? 0));
+  for (const p of ordinate) {
+    const vincitori = lista(p.vincitori);
+    for (const [uid, ruolo] of Object.entries(p.ruoli ?? {})) {
+      if (p.ospiti?.[uid]) continue; // gli ospiti non entrano in classifica
+      const s = (st[uid] ??= {
+        uid, nome: '', giocate: 0, vinte: 0, giocateAssassino: 0, vinteAssassino: 0,
+        giocateMitomane: 0, vinteMitomane: 0, votiDaBuono: 0, votiSbagliati: 0,
+      });
+      s.nome = p.giocatori?.[uid] ?? s.nome; // vale l'ultimo nome usato
+      s.giocate++;
+      const vinto = vincitori.includes(uid);
+      if (vinto) s.vinte++;
+      if (ruolo === 'Assassino') { s.giocateAssassino++; if (vinto) s.vinteAssassino++; }
+      if (ruolo === 'Mitomane') { s.giocateMitomane++; if (vinto) s.vinteMitomane++; }
+      const esito = p.dettaglio?.[uid];
+      if (esito === true || esito === false) {
+        s.votiDaBuono++;
+        if (esito === false) s.votiSbagliati++;
+      }
+    }
+  }
+  return Object.values(st);
+}
+
+const perc = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+
+// Restituisce le classifiche già ordinate (prime `quanti` posizioni).
+export function classifiche(partite, { minimoVoti = 3, quanti = 5 } = {}) {
+  const st = statistiche(partite);
+  const top = (arr, chiave, ...spareggi) => [...arr]
+    .sort((a, b) => [chiave, ...spareggi].reduce((r, k) => r || b[k] - a[k], 0))
+    .slice(0, quanti);
+  const conPerc = st.map((s) => ({
+    ...s,
+    percVinte: perc(s.vinte, s.giocate),
+    percSbagliati: perc(s.votiSbagliati, s.votiDaBuono),
+    percGiusti: perc(s.votiDaBuono - s.votiSbagliati, s.votiDaBuono),
+    percAssassino: perc(s.vinteAssassino, s.giocateAssassino),
+    percMitomane: perc(s.vinteMitomane, s.giocateMitomane),
+  }));
+  return {
+    migliore: top(conPerc.filter((s) => s.vinte > 0), 'vinte', 'percVinte'),
+    assassino: top(conPerc.filter((s) => s.vinteAssassino > 0), 'vinteAssassino', 'percAssassino'),
+    mitomane: top(conPerc.filter((s) => s.vinteMitomane > 0), 'vinteMitomane', 'percMitomane'),
+    peggiore: top(conPerc.filter((s) => s.votiDaBuono >= minimoVoti && s.votiSbagliati > 0), 'percSbagliati', 'votiSbagliati'),
+    fiuto: top(conPerc.filter((s) => s.votiDaBuono >= minimoVoti), 'percGiusti', 'votiDaBuono'),
+  };
+}
+
+// ---------- curiosità di fine partita ----------
+
+// partita: il risultato appena calcolato (stessa forma di games/ più cambi {uid: n} e tempi {uid: ms dal via}).
+// storico: tutte le partite precedenti, in qualsiasi ordine. Restituisce al massimo `quante` frasi.
+export function curiosita(partita, storico = [], { quante = 4, rng = casuale } = {}) {
+  const nomi = partita.giocatori ?? {};
+  const nome = (u) => nomi[u] ?? '???';
+  const uids = Object.keys(partita.ruoli ?? {});
+  const voti = partita.voti ?? {};
+  const fatti = []; // [priorità, frase]
+  const aggiungi = (priorita, frase) => fatti.push([priorita + rng() * 0.5, frase]);
+
+  // ripensamenti
+  const [indeciso, cambi] = Object.entries(partita.cambi ?? {}).sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (cambi >= 2) aggiungi(3, `${nome(indeciso)} ha cambiato idea ${cambi} volte prima di votare.`);
+
+  // tempi di voto
+  const tempi = Object.entries(partita.tempi ?? {}).filter(([u]) => uids.includes(u)).sort((a, b) => a[1] - b[1]);
+  if (tempi.length >= 2) {
+    const [lento, ms] = tempi.at(-1);
+    if (ms >= 90_000) aggiungi(2, `${nome(lento)} ci ha messo ${Math.floor(ms / 60_000)} min e ${Math.round((ms % 60_000) / 1000)} s per votare.`);
+    const [svelto, ms2] = tempi[0];
+    if (ms2 <= 15_000) aggiungi(2, `${nome(svelto)} ha votato dopo appena ${Math.max(1, Math.round(ms2 / 1000))} secondi.`);
+  }
+
+  // voti ricevuti in questa partita
+  const ricevuti = {};
+  for (const b of Object.values(voti)) ricevuti[b] = (ricevuti[b] ?? 0) + 1;
+  const [bersaglio, quanti] = Object.entries(ricevuti).filter(([b]) => b !== CIELO).sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (quanti >= 3 && quanti >= uids.length / 2) aggiungi(2, `${nome(bersaglio)} ha preso ${quanti} voti su ${Object.keys(voti).length}.`);
+  for (const u of uids) {
+    if (partita.ruoli[u] === 'Assassino' && !ricevuti[u]) aggiungi(3, `L'assassino ${nome(u)} non ha ricevuto nemmeno un voto. 🥷`);
+    if (partita.ruoli[u] === 'Mitomane' && ricevuti[u] >= 2) aggiungi(3, `Il Mitomane ${nome(u)} si è fatto votare ${ricevuti[u]} volte. 🤡`);
+  }
+  for (const u of uids) {
+    const v = voti[u];
+    if (v && v !== CIELO && voti[v] === u && u < v) aggiungi(1.5, `${nome(u)} e ${nome(v)} si sono votati a vicenda.`);
+  }
+
+  // risultato dei buoni
+  const esiti = Object.values(partita.dettaglio ?? {}).filter((x) => x === true || x === false);
+  if (esiti.length >= 2 && esiti.every(Boolean)) aggiungi(3, 'Buoni perfetti: tutti hanno votato giusto! 🎯');
+  if (esiti.length >= 2 && !esiti.some(Boolean)) aggiungi(2.5, 'Nessun buono ha indovinato. 🙈');
+  if (Object.values(voti).includes(CIELO)) {
+    const ciSono = Object.values(partita.ruoli).some(isAssassino);
+    aggiungi(ciSono ? 1 : 2.5, ciSono ? 'Qualcuno ha guardato il cielo, ma gli assassini c\'erano eccome.' : 'Il cielo ha fatto giustizia: niente assassini in gioco. ☁️');
+  }
+
+  // storico: serie di vittorie/sconfitte e "mai votato"
+  const tutte = [...storico.filter((p) => p !== partita), partita].sort((a, b) => (a.finitaIl ?? Infinity) - (b.finitaIl ?? Infinity));
+  for (const u of uids) {
+    if (partita.ospiti?.[u]) continue;
+    const sue = tutte.filter((p) => p.ruoli?.[u]);
+    let serie = 0;
+    const vintaUltima = lista(sue.at(-1)?.vincitori).includes(u);
+    for (let i = sue.length - 1; i >= 0 && lista(sue[i].vincitori).includes(u) === vintaUltima; i--) serie++;
+    if (vintaUltima && serie >= 3) aggiungi(4, `${nome(u)} ha vinto ${serie} partite di fila! 🔥`);
+    if (!vintaUltima && serie >= 4) aggiungi(2, `${nome(u)} ha perso ${serie} partite di fila. Coraggio!`);
+    const maiVotato = sue.every((p) => !Object.values(p.voti ?? {}).includes(u));
+    if (sue.length >= 3 && maiVotato) aggiungi(3, `Nessuno ha mai votato ${nome(u)} in ${sue.length} partite. 😇`);
+    const ruolo = partita.ruoli[u];
+    if ((ruolo === 'Assassino' || ruolo === 'Mitomane') && lista(partita.vincitori).includes(u)
+        && sue.filter((p) => p.ruoli[u] === ruolo && lista(p.vincitori).includes(u)).length === 1 && sue.length > 1) {
+      aggiungi(2.5, `Prima vittoria da ${ruolo} per ${nome(u)}!`);
+    }
+  }
+
+  return fatti.sort((a, b) => b[0] - a[0]).slice(0, quante).map(([, f]) => f);
+}

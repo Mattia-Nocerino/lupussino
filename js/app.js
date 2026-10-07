@@ -35,6 +35,9 @@ const S = {
   manoRound: null,
   coperta: true,     // la carta parte sempre coperta
   mioVoto: null,
+  scelta: null,      // voto selezionato ma non ancora confermato
+  cambi: 0,          // quante volte hai cambiato scelta prima di confermare (per le curiosità)
+  vista: null,       // 'classifica' quando sei fuori dalle stanze
   calcolando: false,
 };
 let unsubStanze = null;
@@ -121,7 +124,7 @@ function ascoltaStanze() {
   });
 }
 
-const mioGiocatore = () => ({ nome: S.nome, online: true, visto: serverTimestamp() });
+const mioGiocatore = () => ({ nome: S.nome, online: true, visto: serverTimestamp(), ospite: !!S.user.isAnonymous });
 
 async function creaStanza(nome) {
   nome = nome.trim().slice(0, 30);
@@ -272,6 +275,7 @@ async function avviaPartita() {
     [`${roomPath()}/status`]: 'playing',
     [`${roomPath()}/round`]: round,
     [`${roomPath()}/inGioco`]: nomi,
+    [`${roomPath()}/iniziatoIl`]: serverTimestamp(),
     [`${roomPath()}/nGiocatori`]: uids.length, // il mazzo del round resta questo anche se poi qualcuno viene rimosso
     [`${roomPath()}/voted`]: null,
     [`${roomPath()}/result`]: null,
@@ -286,21 +290,31 @@ async function caricaMano() {
   S.coperta = true;
   S.mano = null;
   S.mioVoto = null;
+  S.scelta = null;
+  S.cambi = 0;
   const [mano, voto] = await Promise.all([
     get(ref(db, `hands/${S.roomId}/${round}/${S.user.uid}`)),
     get(ref(db, `votes/${S.roomId}/${round}/${S.user.uid}`)),
   ]);
   if (S.manoRound !== round) return;
   S.mano = mano.val();
-  S.mioVoto = voto.val();
+  S.mioVoto = voto.val()?.bersaglio ?? null;
   render();
 }
 
-async function vota(bersaglio) {
-  if (S.mioVoto) return;
-  if (!confirm(`Confermi il voto per ${nomeDi(bersaglio)}? Non potrai cambiarlo.`)) return;
+// Il voto è in due tempi: tocchi un nome per sceglierlo (puoi cambiare idea), poi confermi.
+function scegli(bersaglio) {
+  if (S.mioVoto || S.scelta === bersaglio) return;
+  if (S.scelta) S.cambi++;
+  S.scelta = bersaglio;
+  render();
+}
+
+async function confermaVoto() {
+  const bersaglio = S.scelta;
+  if (S.mioVoto || !bersaglio) return;
   await update(ref(db), {
-    [`votes/${S.roomId}/${S.room.round}/${S.user.uid}`]: bersaglio,
+    [`votes/${S.roomId}/${S.room.round}/${S.user.uid}`]: { bersaglio, cambi: S.cambi, at: serverTimestamp() },
     [`${roomPath()}/voted/${S.user.uid}`]: true,
   });
   S.mioVoto = bersaglio;
@@ -325,24 +339,47 @@ async function calcolaRisultato() {
     const mazzo = mazzoSnap.val();
     // contano solo i giocatori ancora nel round (chi è stato rimosso esce dal conteggio)
     const presenti = (u) => u in (S.room.inGioco ?? {});
-    const voti = Object.fromEntries(Object.entries(votiSnap.val() ?? {}).filter(([u]) => presenti(u)));
+    const schede = Object.entries(votiSnap.val() ?? {}).filter(([u]) => presenti(u));
+    const voti = Object.fromEntries(schede.map(([u, v]) => [u, v.bersaglio]));
+    const cambi = Object.fromEntries(schede.map(([u, v]) => [u, v.cambi ?? 0]));
+    const inizio = S.room.iniziatoIl;
+    const tempi = inizio ? Object.fromEntries(schede.filter(([, v]) => v.at).map(([u, v]) => [u, v.at - inizio])) : {};
     const esito = G.esitoVoto(mazzo.assegnazioni, voti);
     esito.vincitori = esito.vincitori.filter(presenti);
     const ruoli = Object.fromEntries(Object.entries(mazzo.assegnazioni).filter(([u]) => presenti(u)));
-    const result = { ...esito, ruoli, scarti: mazzo.scarti, voti };
+    const ospiti = Object.fromEntries(Object.keys(ruoli).filter((u) => S.room.players?.[u]?.ospite).map((u) => [u, true]));
+    const partita = {
+      ...esito, ruoli, scarti: mazzo.scarti, voti, cambi, tempi, ospiti, giocatori: S.room.inGioco, finitaIl: Date.now(),
+    };
+    const storico = await leggiPartite().catch(() => []);
+    const result = { ...partita, fatti: G.curiosita(partita, storico) };
 
     await update(ref(db), {
       [`${roomPath()}/status`]: 'ended',
       [`${roomPath()}/result`]: result,
-      [`games/${S.roomId}_${round}`]: {
-        roomId: S.roomId, round, hostUid: S.user.uid, giocatori: S.room.inGioco, ...result, finitaIl: serverTimestamp(),
-      },
+      [`games/${S.roomId}_${round}`]: { roomId: S.roomId, round, hostUid: S.user.uid, ...partita, finitaIl: serverTimestamp() },
     });
   } catch (e) {
     console.error(e); toast(e.message);
   } finally {
     S.calcolando = false;
   }
+}
+
+// Storico partite (base di classifiche e curiosità). Con pochi amici restano poche migliaia di righe.
+async function leggiPartite() {
+  const snap = await get(query(ref(db, 'games'), orderByChild('finitaIl'), limitToLast(2000)));
+  const partite = [];
+  snap.forEach((c) => { partite.push(c.val()); });
+  return partite;
+}
+
+async function apriClassifica() {
+  S.vista = 'classifica';
+  S.classifiche = null;
+  render();
+  S.classifiche = G.classifiche(await leggiPartite());
+  render();
 }
 
 async function nuovaPartita() {
@@ -356,6 +393,7 @@ function render() {
     ? `<span>${esc(S.nome)}</span><button class="link" data-action="logout">Esci</button>`
     : '';
   if (!S.user) return ($app.innerHTML = vistaLogin());
+  if (!S.room && S.vista === 'classifica') return ($app.innerHTML = vistaClassifica());
   if (!S.room) return ($app.innerHTML = vistaHome());
   const viste = { lobby: vistaLobby, playing: vistaPartita, ended: vistaRisultato };
   $app.innerHTML = viste[S.room.status]?.() ?? '';
@@ -380,8 +418,29 @@ function listaStanze() {
   return stanze ? `<ul class="list">${stanze}</ul>` : '<p class="muted">Nessuna stanza aperta. Creane una!</p>';
 }
 
+function vistaClassifica() {
+  const c = S.classifiche;
+  if (!c) return '<p class="muted">Carico le partite…</p>';
+  const blocco = (titolo, sottotitolo, righe, valore) => `
+    <h2>${titolo}</h2>
+    <section class="panel">
+      <p class="muted">${sottotitolo}</p>
+      ${righe.length ? `<ol class="classifica">${righe.map((s) => `<li><span>${esc(s.nome)}</span><strong>${valore(s)}</strong></li>`).join('')}</ol>`
+        : '<p class="muted">Ancora nessuno.</p>'}
+    </section>`;
+  return `
+    <div class="titolo-riga"><h2>🏆 Classifiche</h2><button class="mazzo-btn" data-action="indietro">← Stanze</button></div>
+    ${blocco('🥇 Miglior giocatore', 'Partite vinte', c.migliore, (s) => `${s.vinte} <small>(${s.percVinte}% di ${s.giocate})</small>`)}
+    ${blocco('🔪 Miglior assassino', 'Vittorie da Assassino', c.assassino, (s) => `${s.vinteAssassino} <small>su ${s.giocateAssassino}</small>`)}
+    ${blocco('🤡 Miglior mitomane', 'Vittorie da Mitomane', c.mitomane, (s) => `${s.vinteMitomane} <small>su ${s.giocateMitomane}</small>`)}
+    ${blocco('🎯 Fiuto migliore', 'Voti giusti da buono (almeno 3 voti)', c.fiuto, (s) => `${s.percGiusti}% <small>di ${s.votiDaBuono}</small>`)}
+    ${blocco('🙈 Peggior giocatore', 'Voti sbagliati da buono (almeno 3 voti)', c.peggiore, (s) => `${s.percSbagliati}% <small>di ${s.votiDaBuono}</small>`)}
+    <p class="muted">Gli ospiti non entrano in classifica: per comparire entra con Google.</p>`;
+}
+
 function vistaHome() {
   return `
+    <button class="full" data-action="classifica">🏆 Classifiche</button>
     <section class="panel stack">
       <label class="muted" for="nome">Il tuo nome</label>
       <form data-form="nome" class="row"><input id="nome" name="nome" value="${esc(S.nome)}" maxlength="20" required><button>Salva</button></form>
@@ -439,12 +498,15 @@ function vistaPartita() {
   const uids = Object.keys(r.inGioco ?? {});
   const votanti = uids.filter((u) => r.voted?.[u]).length;
   const mancano = uids.filter((u) => !r.voted?.[u]).map((u) => esc(r.inGioco[u])).join(', ');
+  const bottone = (u, testo) => `<button data-action="scegli" data-uid="${esc(u)}" class="${S.scelta === u ? 'scelto' : ''}">${testo}</button>`;
   const voto = S.mioVoto
     ? `<p>Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.</p>`
     : `<div class="voti">
-        ${uids.filter((u) => u !== S.user.uid).map((u) => `<button data-action="vota" data-uid="${esc(u)}">${esc(r.inGioco[u])}</button>`).join('')}
-        <button data-action="vota" data-uid="${G.CIELO}">☁️ Cielo</button>
-      </div>`;
+        ${uids.filter((u) => u !== S.user.uid).map((u) => bottone(u, esc(r.inGioco[u]))).join('')}
+        ${bottone(G.CIELO, '☁️ Cielo')}
+      </div>
+      <button class="primary full" data-action="conferma" ${S.scelta ? '' : 'disabled'}>
+        ${S.scelta ? `Conferma voto: ${esc(nomeDi(S.scelta))}` : 'Scegli chi votare'}</button>`;
 
   return `
     <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
@@ -482,6 +544,7 @@ function vistaRisultato() {
     <div class="banner ${res.vincitore}">${res.vincitore === G.PAREGGIO ? 'Pareggio: non vince nessuno' : `Vincono i ${res.vincitore}!`}</div>
     <p class="muted" style="text-align:center">Voti dei buoni: ${res.giusti} giusti, ${res.sbagliati} sbagliati${res.votiMitomane ? ` (di cui ${res.votiMitomane} al Mitomane)` : ''}</p>
     <section class="panel"><ul class="list">${righe}</ul></section>
+    ${Object.values(res.fatti ?? {}).length ? `<h2>💡 Lo sapevi?</h2><section class="panel"><ul class="fatti">${Object.values(res.fatti).map((f) => `<li>${esc(f)}</li>`).join('')}</ul></section>` : ''}
     ${Object.values(res.ruoli ?? {}).some(G.isAssassino) ? '' : '<p class="muted" style="text-align:center">Non c\'erano assassini in gioco: il voto giusto era il cielo.</p>'}
     <p class="muted">Carte scartate: ${Object.values(res.scarti ?? {}).map((c) => `<span class="pill piccola" style="${stileRuolo(c)}">${esc(c)}</span>`).join(' ')}</p>
     ${sonoHost()
@@ -559,7 +622,10 @@ document.addEventListener('click', (e) => {
     avvia: () => tenta(avviaPartita),
     gira: () => { S.coperta = !S.coperta; render(); },
     mazzo: apriMazzo,
-    vota: () => tenta(() => vota(uid)),
+    scegli: () => scegli(uid),
+    conferma: () => tenta(confermaVoto),
+    classifica: () => tenta(apriClassifica),
+    indietro: () => { S.vista = null; render(); },
     nuova: () => tenta(nuovaPartita),
   };
   azioni[action]?.();

@@ -25,16 +25,19 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ⬜ Timer opzionale di discussione prima del voto
 - ⬜ PWA (icona sulla home, schermo sempre acceso durante la partita con Wake Lock)
 
-## Fase 3: classifica
-I dati ci sono già in `games/` (ruoli, voti, giusti/sbagliati, vincitori per ogni partita).
-- ⬜ Pagina "Classifica" che legge `games/` e calcola:
-  - **Miglior giocatore**: più partite vinte (mostrare anche % vittorie, con un minimo di partite giocate)
-  - **Miglior assassino**: più vittorie da Assassino
-  - **Miglior mitomane**: più vittorie da Mitomane (o più volte votato)
-  - **Peggior giocatore**: più voti sbagliati da buono (buono che vota buono, mitomane o cielo con assassini in gioco), in % sui voti dati
-- ⬜ Aggregare in `stats/{uid}` a fine partita (transazione nel Realtime Database) invece di rileggere tutto lo storico
-- ⬜ Gli ospiti non entrano in classifica (o possono "promuovere" il profilo collegando Google)
+## Fase 3: classifiche e curiosità
+- ✅ Pagina "Classifiche" calcolata da `games/`: miglior giocatore, miglior assassino, miglior mitomane, fiuto migliore, peggior giocatore (% voti sbagliati da buono, minimo 3 voti)
+- ✅ Gli ospiti non entrano in classifica
+- ✅ Voto in due tempi (scegli e conferma): conta i ripensamenti
+- ✅ "Lo sapevi?" a fine partita: ripensamenti, tempi di voto, serie di vittorie, mai votato, assassino invisibile, mitomane votato, voti reciproci, buoni perfetti, prime vittorie da ruolo
+- ⬜ Aggregare in `stats/{uid}` a fine partita invece di rileggere tutto lo storico (serve solo con migliaia di partite)
+- ⬜ Ospiti che "promuovono" il profilo collegando Google
 - ❓ Classifica globale o per gruppo di amici/stanza? Per stagione/mese?
+
+## Fase 5: senza internet
+- ⬜ Rendere l'app installabile e utilizzabile offline (PWA con service worker)
+- ⬜ Modalità "un solo telefono": il telefono passa di mano, ognuno guarda la sua carta e vota di nascosto; nessuna rete necessaria
+- ❓ Alternativa multi-telefono: hotspot di un telefono + collegamento diretto WebRTC con QR code (complesso, da valutare)
 
 ## Fase 4: punteggi, moltiplicatori e bonus (proposte da scegliere)
 Base proposta: chi vince prende **10 punti**, chi perde 0.

@@ -143,3 +143,14 @@ dialog.mazzo {
 }
 dialog.mazzo::backdrop { background: rgba(0, 0, 0, .6); }
 dialog.mazzo h2 { margin-top: 0; }
+
+/* Classifiche e curiosità */
+ol.classifica { margin: 0; padding-left: 1.4em; }
+ol.classifica li { padding: 6px 0; border-bottom: 1px solid var(--panel-2); }
+ol.classifica li:last-child { border-bottom: none; }
+ol.classifica li > * { vertical-align: middle; }
+ol.classifica li strong { float: right; }
+ol.classifica li:first-child span { color: var(--accent); font-weight: 700; }
+ol.classifica small { color: var(--muted); font-weight: 400; }
+ul.fatti { margin: 0; padding-left: 1.2em; }
+ul.fatti li + li { margin-top: 6px; }

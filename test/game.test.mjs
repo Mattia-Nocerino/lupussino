@@ -93,3 +93,44 @@ test('distribuzione uniforme: ogni ruolo arriva a ogni posto', () => {
     assert.ok(conteggio[r] > 380 && conteggio[r] < 620, JSON.stringify(conteggio));
   }
 });
+
+test('classifiche: vittorie, ruoli, voti sbagliati, ospiti esclusi', async () => {
+  const { classifiche } = await import('../js/game.js');
+  const partita = (t, ruoli, vincitori, dettaglio, ospiti = {}) => ({
+    finitaIl: t, ruoli, vincitori, dettaglio, ospiti,
+    giocatori: Object.fromEntries(Object.keys(ruoli).map((u) => [u, u.toUpperCase()])),
+  });
+  const partite = [
+    partita(1, { a: 'Assassino', b: 'Cittadino', c: 'Testimone', o: 'Mitomane' }, ['a', 'o'], { b: false, c: false }, { o: true }),
+    partita(2, { a: 'Cittadino', b: 'Assassino', c: 'Mitomane' }, ['a'], { a: true }),
+    partita(3, { a: 'Testimone', b: 'Cittadino', c: 'Assassino' }, ['c'], { a: false, b: false }),
+    partita(4, { a: 'Cittadino', b: 'Testimone', c: 'Assassino' }, ['a', 'b'], { a: true, b: false }),
+  ];
+  const c = classifiche(partite);
+  assert.equal(c.migliore[0].uid, 'a');
+  assert.equal(c.migliore[0].vinte, 3);
+  assert.equal(c.assassino[0].uid, 'a'); // 1 vittoria su 1, c ha 1 vittoria su 2
+  assert.equal(c.mitomane.length, 0);    // l'unico mitomane vincente era ospite
+  assert.equal(c.peggiore[0].uid, 'b');  // 3 voti su 3 sbagliati
+  assert.ok(!JSON.stringify(c).includes('"o"'));
+});
+
+test('curiosità: ripensamenti, serie di vittorie, mai votato, assassino invisibile', async () => {
+  const { curiosita } = await import('../js/game.js');
+  const giocatori = { a: 'Anna', b: 'Bea', c: 'Carlo', d: 'Dario' };
+  const vecchie = [1, 2].map((t) => ({ finitaIl: t, giocatori, ruoli: { a: 'Cittadino', b: 'Testimone', c: 'Assassino', d: 'Testimone' }, vincitori: ['a', 'b', 'd'], voti: { a: 'c', b: 'c', c: 'b', d: 'c' } }));
+  const ora = {
+    finitaIl: 3, giocatori,
+    ruoli: { a: 'Cittadino', b: 'Mitomane', c: 'Testimone', d: 'Assassino' },
+    vincitori: ['a', 'c'], dettaglio: { a: true, c: true },
+    voti: { a: 'd', b: 'c', c: 'd', d: 'c' },
+    cambi: { a: 0, b: 3, c: 1, d: 0 },
+  };
+  const fatti = curiosita(ora, vecchie, { quante: 10, rng: () => 0 });
+  const tutto = fatti.join('\n');
+  assert.match(tutto, /Bea ha cambiato idea 3 volte/);
+  assert.match(tutto, /Anna ha vinto 3 partite di fila/);
+  assert.match(tutto, /Nessuno ha mai votato Anna in 3 partite/);
+  assert.match(tutto, /Buoni perfetti/);
+  assert.ok(curiosita(ora, vecchie, { rng: () => 0 }).length <= 4);
+});
