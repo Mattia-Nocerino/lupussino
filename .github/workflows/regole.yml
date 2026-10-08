@@ -1,0 +1,35 @@
+# Pubblica database.rules.json su Firebase a ogni push su main che le modifica.
+# Serve il secret FIREBASE_SERVICE_ACCOUNT (chiave JSON di un account di servizio del progetto "lupussino").
+name: Regole Firebase
+
+on:
+  push:
+    branches: [main]
+    paths: [database.rules.json, firebase.json, .github/workflows/regole.yml]
+  workflow_dispatch:
+
+concurrency: regole-firebase
+
+jobs:
+  pubblica:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove
+        run: node --test test/*.test.mjs
+      - name: Controlla che le regole siano JSON valido
+        run: node -e "JSON.parse(require('fs').readFileSync('database.rules.json','utf8'))"
+      - name: Pubblica le regole
+        env:
+          CHIAVE: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$CHIAVE" ]; then
+            echo "::warning::Manca il secret FIREBASE_SERVICE_ACCOUNT: regole non pubblicate."
+            exit 0
+          fi
+          printf '%s' "$CHIAVE" > "$RUNNER_TEMP/chiave.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/chiave.json"
+          npx --yes firebase-tools@14 deploy --only database --project lupussino --non-interactive
