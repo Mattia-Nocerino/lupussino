@@ -22,7 +22,7 @@
 
         "players": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && (data.parent().parent().child('status').val() !== 'playing' || (data.exists() && newData.exists()))",
+            ".write": "auth != null && auth.uid === $uid && (data.parent().parent().child('status').val() !== 'playing' || newData.exists() || !data.parent().parent().child('inGioco').child($uid).exists())",
             ".validate": "!newData.exists() || (newData.child('nome').isString() && newData.child('nome').val().length <= 20)"
           }
         },
@@ -49,6 +49,9 @@
     "secret": {
       "$roomId": {
         ".read": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid",
+        "$round": {
+          ".read": "auth != null && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('round').val() + '' === $round && root.child('rooms').child($roomId).child('players').child(auth.uid).exists() && !root.child('rooms').child($roomId).child('inGioco').child(auth.uid).exists()"
+        },
         ".write": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid"
       }
     },
