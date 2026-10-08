@@ -312,8 +312,8 @@ async function avviaPartita() {
     [`${roomPath()}/voted`]: null,
     [`${roomPath()}/result`]: null,
     // timer di discussione: alla scadenza il voto si chiude per tutti
-    [`${roomPath()}/fineVoto`]: S.room.timer ? ora() + S.room.timer * 60_000 : null,
-    [`${roomPath()}/durataVoto`]: S.room.timer ? S.room.timer * 60_000 : null,
+    [`${roomPath()}/fineVoto`]: minutiTimer(S.room) ? ora() + minutiTimer(S.room) * 60_000 : null,
+    [`${roomPath()}/durataVoto`]: minutiTimer(S.room) ? minutiTimer(S.room) * 60_000 : null,
   };
   for (const uid of uids) modifiche[`hands/${S.roomId}/${round}/${uid}`] = mani[uid];
   await update(ref(db), modifiche);
@@ -701,13 +701,15 @@ function vistaRisultato() {
     <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
 }
 
-// Il capo sceglie il timer prima di avviare; gli altri lo vedono.
+// Il capo sceglie il timer prima di avviare; gli altri lo vedono. Senza scelta vale 10 minuti, 0 = spento.
+const TIMER_DEFAULT = 10;
+const minutiTimer = (r) => r?.timer ?? TIMER_DEFAULT;
 function sceltaTimer(r) {
-  const opzioni = [0, 1, 2, 3, 5, 8];
-  const testo = (m) => (m ? `${m} min` : 'nessuno');
-  if (!sonoHost()) return r.timer ? `<p class="muted">⏱️ Timer di discussione: ${testo(r.timer)}, poi il voto si chiude.</p>` : '';
-  return `<section class="panel row"><label class="muted" for="timer" style="flex:1">⏱️ Timer di discussione</label>
-    <select id="timer" data-change="timer">${opzioni.map((m) => `<option value="${m}" ${(r.timer ?? 0) === m ? 'selected' : ''}>${testo(m)}</option>`).join('')}</select></section>`;
+  const m = minutiTimer(r);
+  if (!sonoHost()) return m ? `<p class="muted">⏱️ Timer di discussione: ${m} min, poi il voto si chiude.</p>` : '';
+  return `<section class="panel timer-scelta">
+    <label><input type="checkbox" data-change="timer-attivo" ${m ? 'checked' : ''}><span>⏱️ Timer di discussione</span><output id="timer-valore">${m ? `${m} min` : 'spento'}</output></label>
+    ${m ? `<input type="range" min="1" max="20" step="1" value="${m}" data-change="timer" aria-label="Minuti di discussione">` : ''}</section>`;
 }
 
 const conSegno = (n) => (n > 0 ? `+${n}` : `${n}`);
@@ -1383,7 +1385,14 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('change', (e) => {
-  if (e.target.dataset.change === 'timer' && sonoHost()) tenta(() => update(roomRef(), { timer: Number(e.target.value) || null }));
+  if (!sonoHost()) return;
+  if (e.target.dataset.change === 'timer') tenta(() => update(roomRef(), { timer: Number(e.target.value) || TIMER_DEFAULT }));
+  if (e.target.dataset.change === 'timer-attivo') tenta(() => update(roomRef(), { timer: e.target.checked ? TIMER_DEFAULT : 0 }));
+});
+
+// Mentre si trascina lo slider il numero si aggiorna subito; il salvataggio avviene al rilascio.
+document.addEventListener('input', (e) => {
+  if (e.target.dataset.change === 'timer') document.getElementById('timer-valore').textContent = `${e.target.value} min`;
 });
 
 document.addEventListener('submit', (e) => {

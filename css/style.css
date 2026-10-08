@@ -211,3 +211,11 @@ dialog.regole p { font-size: .9rem; }
 
 /* Link in fondo alla pagina: discreti, senza sottolineatura */
 .discreto button.link { text-decoration: none; }
+
+.timer-scelta label { cursor: pointer; }
+.timer-scelta input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent, #f2b33d); }
+.timer-scelta output { font-weight: 700; font-variant-numeric: tabular-nums; }
+.timer-scelta input[type=range] { width: 100%; margin-top: 12px; accent-color: var(--accent, #f2b33d); }
+.timer-scelta label { display: flex; align-items: center; gap: 10px; }
+.timer-scelta label span { flex: 1; text-align: left; }
+.timer-scelta input[type=checkbox] { flex: none; margin: 0; padding: 0; }
