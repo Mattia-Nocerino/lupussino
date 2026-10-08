@@ -172,6 +172,8 @@ test('punteggi: la squadra pesa più dei bonus personali', async () => {
   const p2 = G.punteggi(senzaAssassini, { av: 'c', c: G.CIELO }, G.esitoVoto(senzaAssassini, { av: 'c', c: G.CIELO }));
   assert.equal(p2.c.voci.find((v) => v.m === 'Cielo giusto').p, 3);
   assert.equal(p2.av.voci.at(-1).p, -2); // sbaglia con un indizio in mano
+  const p3 = G.punteggi(senzaAssassini, { av: 'c', c: G.CIELO }, G.esitoVoto(senzaAssassini, { av: 'c', c: G.CIELO }), { c: true });
+  assert.equal(p3.c.totale, p2.c.totale - 3); // cielo automatico allo scadere: niente bonus
 
   const cl = G.aggiungiAllaClassifica(G.aggiungiAllaClassifica({}, { punti: p, giocatori: { a: 'A' }, vincitori: esito.vincitori }), { punti: p, vincitori: esito.vincitori });
   assert.equal(cl.a.punti, 20);

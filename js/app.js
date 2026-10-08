@@ -378,7 +378,7 @@ function chiudiVotoTraPoco() {
   }, ULTIMI_SECONDI_MS);
 }
 
-// Timer scaduto: il capo chiude il voto con i voti dati fin lì (chi non ha votato resta senza voto).
+// Timer scaduto: il capo chiude il voto con i voti dati fin lì (chi non ha votato vota il cielo).
 function chiudiVotoAllaScadenza() {
   const fine = S.room.fineVoto;
   if (chiudiVotoAllaScadenza.fine === fine) return;
@@ -410,6 +410,9 @@ async function calcolaRisultato() {
     const presenti = (u) => u in (S.room.inGioco ?? {});
     const schede = Object.entries(votiSnap.val() ?? {}).filter(([u]) => presenti(u));
     const voti = Object.fromEntries(schede.map(([u, v]) => [u, v.bersaglio]));
+    // allo scadere del timer chi non ha votato vota il cielo
+    const automatici = {};
+    if (S.room.fineVoto) for (const u of Object.keys(S.room.inGioco ?? {})) if (!voti[u]) { voti[u] = G.CIELO; automatici[u] = true; }
     const cambi = Object.fromEntries(schede.map(([u, v]) => [u, v.cambi ?? 0]));
     const inizio = S.room.iniziatoIl;
     const tempi = inizio ? Object.fromEntries(schede.filter(([, v]) => v.at).map(([u, v]) => [u, v.at - inizio])) : {};
@@ -417,10 +420,10 @@ async function calcolaRisultato() {
     esito.vincitori = esito.vincitori.filter(presenti);
     const ruoli = Object.fromEntries(Object.entries(mazzo.assegnazioni).filter(([u]) => presenti(u)));
     const ospiti = Object.fromEntries(Object.keys(ruoli).filter((u) => S.room.players?.[u]?.ospite).map((u) => [u, true]));
-    const punti = G.punteggi(ruoli, voti, esito);
+    const punti = G.punteggi(ruoli, voti, esito, automatici);
     G.bonusSerie(punti, S.room.classifica, esito.vincitori);
     const partita = {
-      ...esito, ruoli, scarti: mazzo.scarti, voti, cambi, tempi, ospiti, punti, giocatori: S.room.inGioco, finitaIl: Date.now(),
+      ...esito, ruoli, scarti: mazzo.scarti, voti, automatici, cambi, tempi, ospiti, punti, giocatori: S.room.inGioco, finitaIl: Date.now(),
     };
     const storico = await leggiPartite().catch(() => []);
     const result = { ...partita, fatti: G.curiosita(partita, storico) };
@@ -706,7 +709,7 @@ const TIMER_DEFAULT = 10;
 const minutiTimer = (r) => r?.timer ?? TIMER_DEFAULT;
 function sceltaTimer(r) {
   const m = minutiTimer(r);
-  if (!sonoHost()) return m ? `<p class="muted">⏱️ Timer di discussione: ${m} min, poi il voto si chiude.</p>` : '';
+  if (!sonoHost()) return m ? `<p class="muted">⏱️ Timer di discussione: ${m} min, poi il voto si chiude (chi non ha votato va al cielo).</p>` : '';
   return `<section class="panel timer-scelta">
     <label><input type="checkbox" data-change="timer-attivo" ${m ? 'checked' : ''}><span>⏱️ Timer di discussione</span><output id="timer-valore">${m ? `${m} min` : 'spento'}</output></label>
     ${m ? `<input type="range" min="1" max="20" step="1" value="${m}" data-change="timer" aria-label="Minuti di discussione">` : ''}</section>`;
@@ -735,7 +738,7 @@ function tabellaRisultato(res, nomeDi) {
     return `<li class="voto-riga">
         <div class="voto-chi">${chi(u)}<small>${coppa} ${esc(res.ruoli[u])}${res.punti?.[u] ? ` · <strong>${conSegno(res.punti[u].totale)}</strong>` : ''}</small></div>
         ${buono ? `<span class="freccia">➜</span>
-        <div class="voto-chi">${res.voti?.[u] ? chi(res.voti[u]) : '<span class="muted">nessun voto</span>'}</div>` : '<span></span><span></span>'}
+        <div class="voto-chi">${res.voti?.[u] ? chi(res.voti[u]) : '<span class="muted">nessun voto</span>'}${res.automatici?.[u] ? '<small class="muted" title="Tempo scaduto: voto automatico">⏰ tempo scaduto</small>' : ''}</div>` : '<span></span><span></span>'}
         <span class="segno">${segno}</span></li>`;
   }).join('');
   return `
@@ -1307,7 +1310,7 @@ function mostraRegole() {
     <p>Ognuno riceve una carta segreta: si gioca da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI}, con ${G.CARTE_EXTRA} carte in più che restano scartate, quindi non tutti i ruoli sono per forza in gioco.</p>
     <ul class="list">${ruoli.map(([r, t]) => `<li><span>${pillola(r)}</span><span class="muted" style="text-align:right">${t}</span></li>`).join('')}</ul>
     <h2>Voto</h2>
-    <p>Si discute e poi ognuno vota chi pensa sia un assassino, oppure ${G.EMOJI_CIELO} <strong>Cielo</strong> se pensa che non ce ne siano. Non si può votare sé stessi. Il voto si può cambiare finché non si chiude.</p>
+    <p>Si discute e poi ognuno vota chi pensa sia un assassino, oppure ${G.EMOJI_CIELO} <strong>Cielo</strong> se pensa che non ce ne siano. Non si può votare sé stessi. Il voto si può cambiare finché non si chiude. Se c'è il timer, allo scadere chi non ha votato vota il cielo.</p>
     <p>Contano <strong>solo i voti dei buoni</strong>. Un voto è giusto se va a un assassino, o al cielo quando non ci sono assassini.</p>
     <ul class="fatti">
       <li>Più voti giusti che sbagliati: vincono i buoni.</li>

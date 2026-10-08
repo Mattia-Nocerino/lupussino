@@ -2,7 +2,7 @@
 // - file del sito: prima la rete (così prendi sempre l'ultima versione), la copia salvata se sei offline
 //   o se la rete non risponde entro qualche secondo (campo debole)
 // - SDK Firebase (indirizzi con la versione, non cambiano mai): prima la copia salvata
-const CACHE = 'lupussino-v6';
+const CACHE = 'lupussino-v7';
 const SDK = '12.19.0';
 const FILE = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/game.js', 'js/offline.js', 'js/firebase-config.js',

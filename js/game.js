@@ -301,7 +301,8 @@ export const PUNTI = {
   maxMitomane: 3,
 };
 
-export function punteggi(assegnazioni, voti, esito) {
+// automatici: chi non ha votato in tempo e finisce al cielo. Conta per la squadra ma non prende il bonus del cielo.
+export function punteggi(assegnazioni, voti, esito, automatici = {}) {
   const punti = {};
   const vincitori = lista(esito.vincitori);
   const ricevuti = {};
@@ -312,7 +313,9 @@ export function punteggi(assegnazioni, voti, esito) {
     const voci = [];
     if (vincitori.includes(uid)) voci.push({ m: 'Squadra vincente', p: PUNTI.vittoria });
     const giusto = esito.dettaglio?.[uid];
-    if (giusto === true) {
+    if (giusto === true && automatici[uid]) {
+      voci.push({ m: 'Cielo automatico (tempo scaduto)', p: 0 });
+    } else if (giusto === true) {
       voci.push(voti[uid] === CIELO ? { m: 'Cielo giusto', p: PUNTI.cieloGiusto } : { m: 'Voto giusto', p: PUNTI.votoGiusto });
     } else if (giusto === false) {
       const indizio = isInvestigatore(ruolo) || ruolo === 'Avvocato';
