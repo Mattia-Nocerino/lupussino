@@ -219,3 +219,6 @@ dialog.regole p { font-size: .9rem; }
 .timer-scelta label { display: flex; align-items: center; gap: 10px; }
 .timer-scelta label span { flex: 1; text-align: left; }
 .timer-scelta input[type=checkbox] { flex: none; margin: 0; padding: 0; }
+button.danger { color: var(--cattivi); border-color: rgba(229, 83, 75, .5); }
+details.admin summary { cursor: pointer; color: var(--muted); }
+details.admin[open] summary { margin-bottom: 10px; }

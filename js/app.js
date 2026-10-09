@@ -142,9 +142,12 @@ function ascoltaStanze() {
     snap.forEach((c) => { stanze.push({ id: c.key, ...c.val() }); });
     // anche quelle in corso (chi è uscito a metà partita deve poter rientrare), ma non quelle abbandonate
     S.stanze = stanze.filter(stanzaViva).reverse();
+    S.tutteLeStanze = stanze.reverse();
     // aggiorna solo la lista, così non si perde quello che l'utente sta scrivendo nei campi
     const $lista = document.getElementById('lista-stanze');
     if ($lista && !S.room) $lista.innerHTML = listaStanze();
+    const $admin = document.getElementById('admin-stanze');
+    if ($admin && !S.room) $admin.innerHTML = listaAdmin();
   });
 }
 
@@ -474,6 +477,30 @@ async function nuovaPartita() {
   await update(roomRef(), { status: 'lobby', inGioco: null, voted: null, result: null, fineVoto: null, durataVoto: null });
 }
 
+// Il boss (account Google di Mattia, deciso nelle regole del database) può eliminare qualsiasi stanza.
+const BOSS = 'nocerino.mattia@gmail.com';
+const sonoBoss = () => S.user?.email === BOSS && S.user.emailVerified && !S.rete;
+
+function listaAdmin() {
+  const righe = (S.tutteLeStanze ?? []).map((r) => {
+    const giocatori = Object.values(r.players ?? {});
+    const online = giocatori.filter((g) => g.online !== false).length;
+    const giorni = Math.floor((ora() - (r.createdAt ?? 0)) / UN_GIORNO_MS);
+    const stato = { playing: '🎲 in corso', ended: 'finita' }[r.status] ?? 'in attesa';
+    return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${stato} · ${online}/${giocatori.length} online · ${giorni ? `${giorni} g fa` : 'oggi'}</span></div>
+      <button class="danger" data-action="elimina-stanza" data-id="${esc(r.id)}">Elimina</button></li>`;
+  }).join('');
+  return righe ? `<ul class="list">${righe}</ul>` : '<p class="muted">Nessuna stanza.</p>';
+}
+
+async function eliminaStanza(id) {
+  const r = S.tutteLeStanze?.find((x) => x.id === id);
+  const avviso = r?.status === 'playing' ? ' C\'è una partita in corso: i giocatori verranno buttati fuori.' : '';
+  if (!confirm(`Eliminare "${r?.name ?? id}"?${avviso}`)) return;
+  await update(ref(db), { [`rooms/${id}`]: null, [`hands/${id}`]: null, [`secret/${id}`]: null, [`votes/${id}`]: null });
+  toast('Stanza eliminata');
+}
+
 async function chiudiStanza() {
   if (!confirm('Chiudere la stanza per tutti? La classifica della stanza andrà persa (le partite restano nello storico).')) return;
   await remove(roomRef());
@@ -605,6 +632,7 @@ function vistaHome() {
       </div>
     </form>
     <button class="full" data-action="classifica">🏆 Classifiche</button>
+    ${sonoBoss() ? `<details class="panel admin"><summary>🛠️ Gestione stanze (solo tu)</summary><div id="admin-stanze">${listaAdmin()}</div></details>` : ''}
     ${linkRegole()}`;
 }
 
@@ -1368,6 +1396,7 @@ document.addEventListener('click', (e) => {
       tenta(() => signOut(auth));
     },
     entra: () => tenta(() => entraInStanza(id)),
+    'elimina-stanza': () => tenta(() => eliminaStanza(id)),
     esci: () => tenta(esciDallaStanza),
     rimuovi: () => tenta(() => rimuoviGiocatore(uid)),
     avvia: () => tenta(avviaPartita),

@@ -14,7 +14,7 @@
       ".read": "auth != null",
       ".indexOn": ["createdAt"],
       "$roomId": {
-        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid && newData.child('status').val() === 'lobby') || data.child('hostUid').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid && newData.child('status').val() === 'lobby') || data.child('hostUid').val() === auth.uid || (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true)))",
 
         "hostUid": {
           ".write": "auth != null && newData.val() === auth.uid && data.parent().child('players').child(auth.uid).exists() && (!data.parent().child('players').child(data.val()).exists() || (data.parent().child('players').child(data.val()).child('online').val() === false && data.parent().child('players').child(data.val()).child('visto').val() < now - 15000))"
@@ -37,7 +37,7 @@
 
     "hands": {
       "$roomId": {
-        ".write": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid",
+        ".write": "auth != null && (root.child('rooms').child($roomId).child('hostUid').val() === auth.uid || (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true)))",
         "$round": {
           "$uid": {
             ".read": "auth != null && (auth.uid === $uid || root.child('rooms').child($roomId).child('hostUid').val() === auth.uid)"
@@ -52,12 +52,13 @@
         "$round": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('round').val() + '' === $round && root.child('rooms').child($roomId).child('players').child(auth.uid).exists() && !root.child('rooms').child($roomId).child('inGioco').child(auth.uid).exists()"
         },
-        ".write": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid"
+        ".write": "auth != null && (root.child('rooms').child($roomId).child('hostUid').val() === auth.uid || (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true)))"
       }
     },
 
     "votes": {
       "$roomId": {
+        ".write": "auth != null && !newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true)",
         ".read": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid",
         "$round": {
           "$uid": {
