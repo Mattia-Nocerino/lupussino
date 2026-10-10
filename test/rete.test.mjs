@@ -55,19 +55,6 @@ test('ognuno riceve solo la propria carta e il proprio voto, mai il mazzo', asyn
   await assert.rejects(L.set(L.ref(ospite, 'votes/r1/1/u1'), { bersaglio: 'capo' }), /Permesso/); // a partita finita no
 });
 
-test('chi entra a partita in corso fa lo spettatore: vede le carte ma non vota', async () => {
-  const { capo, ospite } = await stanza();
-  await L.update(L.ref(capo), {
-    'rooms/r1/status': 'playing', 'rooms/r1/round': 1, 'rooms/r1/inGioco': { capo: 'C', u2: 'Due', u3: 'Tre' },
-    'secret/r1/1': { assegnazioni: { capo: 'Assassino', u2: 'Cittadino', u3: 'Mitomane' } },
-  });
-  await L.set(L.ref(ospite, 'rooms/r1/players/u1'), { nome: 'Uno' });
-  await pausa();
-  assert.equal(ospite.albero.secret.r1[1].assegnazioni.u3, 'Mitomane');
-  await assert.rejects(L.update(L.ref(ospite), { 'rooms/r1/voted/u1': true }), /Permesso/);
-  await L.set(L.ref(ospite, 'rooms/r1/players/u1'), null); // può anche andarsene
-});
-
 test('se un ospite cade il capo lo segna offline; se è stato rimosso non lo ricrea', async () => {
   const { capo, ospite, lato } = await stanza();
   await L.set(L.ref(ospite, 'rooms/r1/players/u1'), { nome: 'Uno', online: true });

@@ -132,7 +132,7 @@ export class Capo extends Db {
       const stanza = ['rooms', 'votes'].includes(p[0]) ? leggi(this.albero, `rooms/${p[1]}`) : null;
       const ok = (
         (p[0] === 'rooms' && p[2] === 'players' && p[3] === uid && stanza
-          && (stanza.status !== 'playing' || p.length > 4 || v !== null || !stanza.inGioco?.[uid]))
+          && (stanza.status !== 'playing' || (stanza.players?.[uid] && (p.length > 4 || v !== null))))
         || (p[0] === 'rooms' && p[2] === 'voted' && p[3] === uid && p.length === 4 && v === true
           && stanza?.status === 'playing' && stanza.inGioco?.[uid] && !stanza.voted?.[uid])
         || (p[0] === 'votes' && p[3] === uid && p.length === 4
@@ -145,7 +145,7 @@ export class Capo extends Db {
     }
   }
 
-  // Quello che un ospite può leggere: la stanza, la propria carta e il proprio voto (lo spettatore anche le carte del round).
+  // Quello che un ospite può leggere: la stanza, la propria carta e il proprio voto.
   vistaPer(uid) {
     const v = { rooms: clona(this.albero.rooms ?? {}) };
     for (const [radice, dest] of [['hands', 'hands'], ['votes', 'votes']]) {
@@ -154,11 +154,6 @@ export class Capo extends Db {
           if (perUid?.[uid] !== undefined) scrivi(v, `${dest}/${stanza}/${r}/${uid}`, clona(perUid[uid]));
         }
       }
-    }
-    // chi è entrato a partita in corso guarda da spettatore: vede le carte del round
-    for (const [id, stanza] of Object.entries(this.albero.rooms ?? {})) {
-      const segreto = this.albero.secret?.[id]?.[stanza.round];
-      if (stanza.status === 'playing' && stanza.players?.[uid] && !stanza.inGioco?.[uid] && segreto) scrivi(v, `secret/${id}/${stanza.round}`, clona(segreto));
     }
     return v;
   }

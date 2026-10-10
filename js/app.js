@@ -174,6 +174,7 @@ async function entraInStanza(id, { soloSeGiaDentro = false } = {}) {
   const room = snap.val();
   if (!room.players?.[S.user.uid]) {
     if (soloSeGiaDentro) { localStorage.removeItem('lupussino.room'); return; }
+    if (room.status === 'playing') return toast('Partita già in corso, riprova dopo.');
     if (Object.keys(room.players ?? {}).length >= G.MAX_GIOCATORI) return toast('Stanza piena.');
     await set(ref(db, `${roomPath(id)}/players/${S.user.uid}`), mioGiocatore());
   }
@@ -193,7 +194,6 @@ function osservaStanza(id) {
     S.room = snap.val();
     const inGioco = !!S.room.inGioco?.[S.user.uid];
     if (S.room.status === 'playing' && inGioco && S.manoRound !== S.room.round) caricaMano();
-    if (S.room.status === 'playing' && !inGioco && S.spettatore?.round !== S.room.round) caricaSpettatore();
     if (S.room.status === 'playing' && sonoHost() && tuttiHannoVotato()) chiudiVotoTraPoco();
     if (S.room.status === 'playing' && sonoHost() && S.room.fineVoto) chiudiVotoAllaScadenza();
     controllaCapo();
@@ -588,7 +588,7 @@ function listaStanze() {
     const stato = { playing: 'partita in corso', ended: 'tra una partita e l\'altra' }[r.status] ?? 'in attesa';
     const bottone = dentro
       ? `<button class="primary" data-action="entra" data-id="${esc(r.id)}">Rientra</button>`
-      : `<button data-action="entra" data-id="${esc(r.id)}" ${n >= G.MAX_GIOCATORI ? 'disabled' : ''}>${r.status === 'playing' ? 'Guarda' : 'Entra'}</button>`;
+      : `<button data-action="entra" data-id="${esc(r.id)}" ${n >= G.MAX_GIOCATORI || r.status === 'playing' ? 'disabled' : ''}>Entra</button>`;
     return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${n}/${G.MAX_GIOCATORI} · ${stato}${dentro ? ' · ci sei dentro' : ''}</span></div>
       ${bottone}</li>`;
   }).join('');
@@ -677,35 +677,12 @@ function vistaLobby() {
     <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
 }
 
-// Chi entra a partita in corso guarda da spettatore: vede le carte di tutti e chi ha votato, gioca dal round dopo.
-async function caricaSpettatore() {
-  const round = S.room.round;
-  S.spettatore = { round };
-  try {
-    const mazzo = (await get(ref(db, `secret/${S.roomId}/${round}`))).val();
-    if (S.spettatore?.round === round) { S.spettatore.mazzo = mazzo; render(); }
-  } catch (e) { console.warn('spettatore', e.message); }
-}
-
-function vistaSpettatore(r) {
-  const mazzo = S.spettatore?.round === r.round ? S.spettatore.mazzo : null;
-  const uids = Object.keys(r.inGioco ?? {});
-  const righe = uids.map((u) => {
-    const ruolo = mazzo?.assegnazioni?.[u];
-    return `<li><span>${ruolo ? `${pillola(ruolo, r.inGioco[u])} <small class="muted">${esc(ruolo)}</small>` : esc(r.inGioco[u])}</span><span class="muted">${r.voted?.[u] ? '🗳️ ha votato' : '…'}</span></li>`;
-  }).join('');
-  const scarti = (mazzo?.scarti ?? []).map((c) => pillola(c)).join(' ');
-  return `<h2>${esc(r.name)}</h2>
-    ${r.fineVoto ? `<div class="timer" data-fine="${r.fineVoto}" data-durata="${r.durataVoto ?? 1}"><span class="timer-barra"></span><span class="timer-testo"></span></div>` : ''}
-    <section class="panel"><p>👁️ <strong>Sei spettatore</strong>: giochi dal prossimo round. Non far capire agli altri cosa vedi!</p></section>
-    <h2>Carte in gioco</h2>
-    <section class="panel"><ul class="list">${righe}</ul>${scarti ? `<p class="muted" style="margin-top:10px">Scartate: ${scarti}</p>` : ''}${mazzo ? '' : '<p class="muted">Carico le carte…</p>'}</section>
-    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
-}
-
 function vistaPartita() {
   const r = S.room;
-  if (!r.inGioco?.[S.user.uid]) return vistaSpettatore(r);
+  if (!r.inGioco?.[S.user.uid]) {
+    return `<h2>${esc(r.name)}</h2><section class="panel"><p>Partita in corso. Entrerai dalla prossima.</p></section>
+      <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+  }
   const m = S.mano;
   const carta = !m
     ? '<div class="carta coperta">Distribuzione carte…</div>'
@@ -1373,7 +1350,7 @@ function mostraRegole() {
     <p>Ognuno riceve una carta segreta: si gioca da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI}, con ${G.CARTE_EXTRA} carte in più che restano scartate, quindi non tutti i ruoli sono per forza in gioco.</p>
     <ul class="list">${ruoli.map(([r, t]) => `<li><span>${pillola(r)}</span><span class="muted" style="text-align:right">${t}</span></li>`).join('')}</ul>
     <h2>Voto</h2>
-    <p>Si discute e poi ognuno vota chi pensa sia un assassino, oppure ${G.EMOJI_CIELO} <strong>Cielo</strong> se pensa che non ce ne siano. Non si può votare sé stessi. Il voto si può cambiare finché non si chiude. Se c'è il timer, allo scadere chi non ha votato vota il cielo. Chi entra a partita in corso guarda da spettatore e gioca dal round dopo.</p>
+    <p>Si discute e poi ognuno vota chi pensa sia un assassino, oppure ${G.EMOJI_CIELO} <strong>Cielo</strong> se pensa che non ce ne siano. Non si può votare sé stessi. Il voto si può cambiare finché non si chiude. Se c'è il timer, allo scadere chi non ha votato vota il cielo.</p>
     <p>Contano <strong>solo i voti dei buoni</strong>. Un voto è giusto se va a un assassino, o al cielo quando non ci sono assassini.</p>
     <ul class="fatti">
       <li>Più voti giusti che sbagliati: vincono i buoni.</li>
