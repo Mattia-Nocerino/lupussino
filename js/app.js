@@ -501,6 +501,15 @@ async function eliminaStanza(id) {
   toast('Stanza eliminata');
 }
 
+// Hard reset: svuota tutto il database (stanze, partite, classifiche, profili). Solo il boss, con doppia conferma.
+async function svuotaDatabase() {
+  if (!confirm('Svuotare TUTTO il database? Spariscono stanze, partite, classifiche e profili di tutti. Non si torna indietro.')) return;
+  const parola = prompt('Ultima conferma: scrivi SVUOTA per cancellare tutto.');
+  if (parola?.trim() !== 'SVUOTA') return toast('Annullato: niente è stato cancellato.');
+  await update(ref(db), { rooms: null, hands: null, secret: null, votes: null, games: null, users: null });
+  toast('Database svuotato');
+}
+
 async function chiudiStanza() {
   if (!confirm('Chiudere la stanza per tutti? La classifica della stanza andrà persa (le partite restano nello storico).')) return;
   await remove(roomRef());
@@ -632,7 +641,10 @@ function vistaHome() {
       </div>
     </form>
     <button class="full" data-action="classifica">🏆 Classifiche</button>
-    ${sonoBoss() ? `<details class="panel admin"><summary>🛠️ Gestione stanze (solo tu)</summary><div id="admin-stanze">${listaAdmin()}</div></details>` : ''}
+    ${sonoBoss() ? `<details class="panel admin"><summary>🛠️ Gestione stanze (solo tu)</summary><div id="admin-stanze">${listaAdmin()}</div>
+      <details class="pericolo"><summary>☢️ Zona pericolosa</summary>
+        <p class="muted">Cancella tutto: stanze, partite, classifiche e profili. Ti chiede due conferme.</p>
+        <button class="danger full" data-action="svuota-db">Svuota tutto il database</button></details></details>` : ''}
     ${linkRegole()}`;
 }
 
@@ -1397,6 +1409,7 @@ document.addEventListener('click', (e) => {
     },
     entra: () => tenta(() => entraInStanza(id)),
     'elimina-stanza': () => tenta(() => eliminaStanza(id)),
+    'svuota-db': () => sonoBoss() && tenta(svuotaDatabase),
     esci: () => tenta(esciDallaStanza),
     rimuovi: () => tenta(() => rimuoviGiocatore(uid)),
     avvia: () => tenta(avviaPartita),
