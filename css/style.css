@@ -226,3 +226,11 @@ details.pericolo { margin-top: 16px; border-top: 1px solid var(--panel-2); paddi
 details.pericolo summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 details.pericolo p { font-size: .8rem; margin: 8px 0; }
 .carta .evidenza { display: inline-block; margin: 6px auto 10px; padding: 6px 14px; border-radius: 99px; font-size: 1.25rem; font-weight: 800; background: rgba(255, 255, 255, .12); border: 2px solid currentColor; }
+
+/* Countdown degli ultimi 10 secondi: numero enorme al centro, non blocca i tocchi */
+#countdown { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  font-size: 38vmin; font-weight: 900; font-variant-numeric: tabular-nums; color: var(--cattivi); opacity: 0;
+  text-shadow: 0 0 40px rgba(229, 83, 75, .55), 0 4px 0 rgba(0, 0, 0, .4); }
+#countdown.mostra { animation: countdown-pop 1s ease-out forwards; }
+@keyframes countdown-pop { 0% { opacity: 0; transform: scale(1.6); } 15% { opacity: .92; transform: scale(1); } 75% { opacity: .85; } 100% { opacity: .15; transform: scale(.9); } }
+@media (prefers-reduced-motion: reduce) { #countdown.mostra { animation: none; opacity: .85; } }

@@ -1313,21 +1313,91 @@ async function uniscitiRete() {
 
 // ---------- timer di discussione ----------
 // Barra sottile in alto che si consuma; negli ultimi 30 secondi diventa rossa e pulsa piano.
+// Avvisi a step (5, 2 e 1 minuto), segnale forte a 30 secondi e countdown grande da 10, con suono e vibrazione.
+
+// Suoni sintetizzati, niente file. I browser fanno partire l'audio solo dopo un tocco, quindi lo sblocco al primo.
+let audio;
+function sbloccaAudio() {
+  try {
+    audio ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+  } catch { /* niente audio: restano scritte e vibrazione */ }
+}
+document.addEventListener('pointerdown', sbloccaAudio, { capture: true, passive: true });
+
+function bip(freq, durata = 0.15, volume = 0.3, dopo = 0) {
+  if (!audio || audio.state !== 'running') return;
+  const t = audio.currentTime + dopo;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(volume, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + durata);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + durata + 0.05);
+}
+
+const SEGNALI = {
+  passo: () => { bip(660); bip(880, 0.15, 0.3, 0.18); navigator.vibrate?.([120, 80, 120]); },
+  trenta: () => { for (const d of [0, 0.22, 0.44]) bip(988, 0.16, 0.4, d); navigator.vibrate?.([200, 100, 200, 100, 200]); },
+  tic: (n) => { bip(n <= 3 ? 1175 : 880, 0.09, 0.35); navigator.vibrate?.(n <= 3 ? 90 : 40); },
+  fine: () => { bip(523, 0.25, 0.45); bip(392, 0.6, 0.45, 0.25); navigator.vibrate?.([400, 150, 400]); },
+};
+const STEP_MINUTI = [5, 2, 1];
+
+// Numero gigante al centro dello schermo negli ultimi 10 secondi (non blocca i tocchi: si può ancora votare).
+function countdown(testo) {
+  let $c = document.getElementById('countdown');
+  if (!testo) { $c?.classList.remove('mostra'); return; }
+  if (!$c) { $c = document.createElement('div'); $c.id = 'countdown'; $c.setAttribute('aria-live', 'assertive'); document.body.append($c); }
+  $c.textContent = testo;
+  $c.classList.remove('mostra'); void $c.offsetWidth; $c.classList.add('mostra'); // riparte l'animazione
+}
+
+function segnaliTimer(fine, durata, resta) {
+  const st = aggiornaTimer.stato;
+  const s = Math.ceil(resta / 1000);
+  // nuovo timer (o pagina aperta a metà): gli step già passati non suonano
+  if (st?.fine !== fine) {
+    aggiornaTimer.stato = { fine, sentiti: new Set([...STEP_MINUTI.map((m) => m * 60), 30].filter((x) => s <= x || durata <= x * 1000)), ultimoS: s, finito: resta === 0 };
+    return;
+  }
+  for (const m of STEP_MINUTI) {
+    if (s <= m * 60 && !st.sentiti.has(m * 60)) { st.sentiti.add(m * 60); SEGNALI.passo(); toast(`⏱️ ${m === 1 ? 'Manca 1 minuto' : `Mancano ${m} minuti`}`); }
+  }
+  if (s <= 30 && !st.sentiti.has(30)) { st.sentiti.add(30); SEGNALI.trenta(); toast('⏱️ Ultimi 30 secondi!'); }
+  if (s !== st.ultimoS) {
+    st.ultimoS = s;
+    if (s > 0 && s <= 10) { SEGNALI.tic(s); countdown(String(s)); }
+  }
+  if (resta === 0 && !st.finito) {
+    st.finito = true;
+    SEGNALI.fine();
+    countdown('⏰');
+    setTimeout(() => countdown(null), 1800);
+  }
+  if (s > 10 && !st.finito) countdown(null);
+}
+
 function aggiornaTimer() {
-  for (const $t of document.querySelectorAll('.timer[data-fine]')) {
-    const resta = Math.max(0, Number($t.dataset.fine) - ora());
+  const $timer = document.querySelectorAll('.timer[data-fine]');
+  if (!$timer.length) countdown(null);
+  for (const $t of $timer) {
+    const fine = Number($t.dataset.fine);
+    const resta = Math.max(0, fine - ora());
     const durata = Number($t.dataset.durata) || 1;
     const s = Math.ceil(resta / 1000);
     $t.querySelector('.timer-testo').textContent = resta ? `⏱️ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '⏰ Tempo scaduto';
     $t.querySelector('.timer-barra').style.width = `${(resta / durata) * 100}%`;
     $t.classList.toggle('ultimi', resta > 0 && resta <= 30_000);
     $t.classList.toggle('scaduto', resta === 0);
-    if (resta > 0 && resta <= 10_000 && !aggiornaTimer.vibrato) { aggiornaTimer.vibrato = true; navigator.vibrate?.(80); }
-    if (resta > 10_000) aggiornaTimer.vibrato = false;
+    segnaliTimer(fine, durata, resta);
     if (resta === 0 && !$t.dataset.chiuso) { $t.dataset.chiuso = '1'; render(); } // blocca i bottoni del voto
   }
 }
-setInterval(aggiornaTimer, 500);
+setInterval(aggiornaTimer, 250);
 
 // ---------- regolamento ----------
 const linkRegole = () => '<p class="discreto"><button class="link" data-action="regole">📖 Regole</button></p>';
