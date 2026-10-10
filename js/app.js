@@ -691,7 +691,7 @@ function vistaPartita() {
       : `<div class="carta scoperta ${m.squadra}" data-action="gira">
           <div class="ruolo">${pillola(m.ruolo, m.ruolo, 'grande')}</div>
           <div class="squadra">${m.squadra}</div>
-          <div>${esc(m.info)}</div>
+          ${m.evidenza ? `<div class="evidenza">${esc(m.evidenza)}</div>` : ''}<div>${esc(m.info)}</div>
           <p class="muted" style="margin-top:16px">Tocca per coprire</p>
         </div>`;
 
@@ -989,7 +989,7 @@ function vistaOffline() {
     return `<div class="carta scoperta ${m.squadra}">
         <div class="ruolo">${pillola(m.ruolo, m.ruolo, 'grande')}</div>
         <div class="squadra">${m.squadra}</div>
-        <div>${esc(m.info)}</div>
+        ${m.evidenza ? `<div class="evidenza">${esc(m.evidenza)}</div>` : ''}<div>${esc(m.info)}</div>
       </div>`;
   };
   const passa = (u, azione, testo) => `

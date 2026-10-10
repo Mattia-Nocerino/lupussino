@@ -39,6 +39,16 @@ test('informazioni per ruolo', () => {
   assert.match(mani.f.info, /Testimone/);
 });
 
+test('il Testimone vede in grande se è da solo o in compagnia', () => {
+  const nomi = { a: 'A', b: 'B', c: 'C' };
+  const solo = informazioni({ a: 'Testimone', b: 'Cittadino', c: 'Assassino' }, [], nomi);
+  assert.equal(solo.a.evidenza, '👀 Sei da solo');
+  assert.equal(solo.b.evidenza, undefined);
+  const due = informazioni({ a: 'Testimone', b: 'Testimone', c: 'Assassino' }, [], nomi);
+  assert.equal(due.a.evidenza, '👀👀 Siete in 2');
+  assert.match(due.b.info, /2 Testimoni/);
+});
+
 test('esempio di Mattia: pareggio con voto al mitomane -> cattivi', () => {
   const ass = { b1: 'Cittadino', b2: 'Testimone', b3: 'Testimone', b4: 'Investigatore', a: 'Assassino', m: 'Mitomane' };
   const voti = { b1: 'b2', b2: 'm', b3: 'a', b4: 'a', a: 'b1', m: 'b1' };

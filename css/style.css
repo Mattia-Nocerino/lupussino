@@ -225,3 +225,4 @@ details.admin[open] summary { margin-bottom: 10px; }
 details.pericolo { margin-top: 16px; border-top: 1px solid var(--panel-2); padding-top: 12px; }
 details.pericolo summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 details.pericolo p { font-size: .8rem; margin: 8px 0; }
+.carta .evidenza { display: inline-block; margin: 6px auto 10px; padding: 6px 14px; border-radius: 99px; font-size: 1.25rem; font-weight: 800; background: rgba(255, 255, 255, .12); border: 2px solid currentColor; }

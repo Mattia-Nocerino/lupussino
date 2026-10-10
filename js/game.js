@@ -93,9 +93,12 @@ export function informazioni(assegnazioni, scarti, nomi, rng = casuale) {
   for (const uid of uids) {
     const ruolo = assegnazioni[uid];
     let info;
+    let evidenza;
     if (isTestimone(ruolo)) {
-      const altri = uids.some((u) => u !== uid && isTestimone(assegnazioni[u]));
-      info = altri ? 'Non sei solo: c\'è almeno un altro Testimone in gioco.' : 'Sei l\'unico Testimone in gioco.';
+      const quanti = uids.filter((u) => isTestimone(assegnazioni[u])).length;
+      info = quanti > 1 ? `Non sei solo: in gioco ci sono ${quanti} Testimoni.` : 'Sei l\'unico Testimone in gioco.';
+      // detto in grande sulla carta, perché a colpo d'occhio è facile confondersi
+      evidenza = quanti > 1 ? `${'👀'.repeat(Math.min(quanti, 3))} Siete in ${quanti}` : '👀 Sei da solo';
     } else if (isInvestigatore(ruolo)) {
       info = `Hai pescato una delle carte scartate: ${pesca(scarti, rng)}.`;
     } else if (ruolo === 'Avvocato') {
@@ -111,7 +114,7 @@ export function informazioni(assegnazioni, scarti, nomi, rng = casuale) {
     } else {
       info = 'Sei buono/a. Non hai poteri: ragiona e vota bene.';
     }
-    mani[uid] = { ruolo, squadra: squadraDi(ruolo), info };
+    mani[uid] = { ruolo, squadra: squadraDi(ruolo), info, ...(evidenza && { evidenza }) };
   }
   return mani;
 }
