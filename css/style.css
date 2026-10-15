@@ -234,3 +234,17 @@ details.pericolo p { font-size: .8rem; margin: 8px 0; }
 #countdown.mostra { animation: countdown-pop 1s ease-out forwards; }
 @keyframes countdown-pop { 0% { opacity: 0; transform: scale(1.6); } 15% { opacity: .92; transform: scale(1); } 75% { opacity: .85; } 100% { opacity: .15; transform: scale(.9); } }
 @media (prefers-reduced-motion: reduce) { #countdown.mostra { animation: none; opacity: .85; } }
+
+/* Stanza essenziale: voto a tendina, il resto in "Altro" */
+.voto select { width: 100%; font-size: 1.05rem; padding: 12px; }
+.votato { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.piccolo { font-size: .8rem; margin: 0; }
+details.altro { margin-top: 20px; }
+details.altro > summary { cursor: pointer; color: var(--muted); text-align: center; list-style: none; padding: 8px; }
+details.altro > summary::-webkit-details-marker { display: none; }
+details.altro[open] > summary { margin-bottom: 8px; }
+details.altro .mazzo-btn { width: 100%; }
+.carta + .voto { margin-top: 14px; }
+.titolo-riga { align-items: baseline; }
+.list button.link { text-decoration: none; color: var(--muted); font-size: .85rem; }
+details.altro button.link { text-decoration: none; }

@@ -344,13 +344,6 @@ async function caricaMano() {
 
 // Il voto è in due tempi: tocchi un nome per sceglierlo (puoi cambiare idea), poi confermi.
 // Anche dopo la conferma si può cambiare voto, finché la partita non è chiusa.
-function scegli(bersaglio) {
-  if ((S.mioVoto && !S.cambiando) || S.scelta === bersaglio) return;
-  if (S.scelta) S.cambi++;
-  S.scelta = bersaglio;
-  render();
-}
-
 async function confermaVoto() {
   const bersaglio = S.scelta;
   if (!bersaglio || (S.mioVoto && !S.cambiando)) return;
@@ -655,26 +648,45 @@ function listaGiocatori() {
     ${sonoHost() && u !== S.user.uid ? `<button class="link" data-action="rimuovi" data-uid="${esc(u)}">rimuovi</button>` : ''}</li>`).join('')}</ul>`;
 }
 
-const pannelloGiocatori = () => `<details class="panel"><summary>Giocatori nella stanza</summary>${listaGiocatori()}</details>`;
+// I pannelli richiudibili ricordano se erano aperti, così un aggiornamento della stanza non li richiude.
+const aperti = new Set();
+const seAperto = (chiave) => (aperti.has(chiave) ? 'open' : '');
+document.addEventListener('toggle', (e) => {
+  const chiave = e.target.dataset?.memo;
+  if (chiave) e.target.open ? aperti.add(chiave) : aperti.delete(chiave);
+}, true);
+
+// Tutto quello che non serve durante il gioco sta in un unico menu chiuso in fondo.
+function menuStanza({ giocatori = true, classifica = true, telefoni = true } = {}) {
+  const r = S.room;
+  const chiudi = sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : '';
+  return `<details class="altro" data-memo="altro" ${seAperto('altro')}><summary>⋯ Altro</summary>
+    <div class="stack">
+      ${bottoneMazzo()}
+      ${classifica ? classificaStanza(r.classifica, { aperta: false }) : ''}
+      ${giocatori ? `<details class="panel" data-memo="giocatori" ${seAperto('giocatori')}><summary>👥 Giocatori nella stanza</summary>${listaGiocatori()}</details>` : ''}
+      ${telefoni ? bottoneTelefoni() : ''}
+      <p><button class="link" data-action="esci">Lascia la stanza</button>${chiudi}</p>
+    </div></details>`;
+}
 
 function vistaLobby() {
   const r = S.room;
   const uids = Object.keys(r.players);
   const ok = G.puoIniziare(uids.length);
   return `
-    <div class="titolo-riga"><h2>${esc(r.name)}</h2>${bottoneMazzo()}</div>
+    <h2>${esc(r.name)}</h2>
     <section class="panel">
-      <p class="muted">Giocatori ${uids.length}/${G.MAX_GIOCATORI} · carte in gioco ${uids.length + G.CARTE_EXTRA}</p>
+      <p class="muted">${uids.length} giocatori · ${uids.length + G.CARTE_EXTRA} carte</p>
       ${listaGiocatori()}
     </section>
     ${sceltaTimer(r)}
-    ${classificaStanza(r.classifica)}
     ${bottoneTelefoni()}
     ${sonoHost()
     ? `<button class="primary full" data-action="avvia" ${ok ? '' : 'disabled'}>Avvia partita</button>
        ${ok ? '' : `<p class="muted">Servono almeno ${G.MIN_GIOCATORI} giocatori.</p>`}`
     : `<p class="muted">In attesa che ${esc(r.players[r.hostUid]?.nome)} avvii la partita…</p>`}
-    <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
+    ${menuStanza({ giocatori: false, telefoni: false })}`;
 }
 
 function vistaPartita() {
@@ -697,35 +709,31 @@ function vistaPartita() {
 
   const uids = Object.keys(r.inGioco ?? {});
   const votanti = uids.filter((u) => r.voted?.[u]).length;
-  const mancano = uids.filter((u) => !r.voted?.[u]).map((u) => esc(r.inGioco[u])).join(', ');
-  const bottone = (u, testo) => `<button data-action="scegli" data-uid="${esc(u)}" class="${S.scelta === u ? 'scelto' : ''}">${testo}</button>`;
   const chiuso = votoChiuso();
+  const opzione = (u, testo) => `<option value="${esc(u)}" ${S.scelta === u ? 'selected' : ''}>${testo}</option>`;
   const voto = chiuso
-    ? `<p>⏰ <strong>Tempo scaduto</strong>: il voto è chiuso. ${S.mioVoto ? `Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.` : 'Non hai votato.'}</p>`
+    ? `<p>⏰ <strong>Tempo scaduto</strong>. ${S.mioVoto ? `Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.` : 'Non hai votato.'}</p>`
     : S.mioVoto && !S.cambiando
-    ? `<p>Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong>.</p>
-      <button class="full" data-action="cambia-voto">✏️ Cambia voto</button>`
-    : `<div class="voti">${uids.filter((u) => u !== S.user.uid).map((u) => bottone(u, esc(r.inGioco[u]))).join('')}</div>
-      <div class="voti-cielo">${bottone(G.CIELO, `${G.EMOJI_CIELO} Cielo: nessun assassino`)}</div>
-      <button class="primary full" data-action="conferma" ${S.scelta ? '' : 'disabled'}>
-        ${S.scelta ? `Conferma voto: ${esc(nomeDi(S.scelta))}` : 'Scegli chi votare'}</button>
+    ? `<div class="votato"><span>Hai votato <strong>${esc(nomeDi(S.mioVoto))}</strong></span><button class="link" data-action="cambia-voto">Cambia</button></div>`
+    : `<select data-change="voto" aria-label="Chi voti">
+        <option value="" ${S.scelta ? '' : 'selected'} disabled>Chi è l'assassino?</option>
+        ${uids.filter((u) => u !== S.user.uid).map((u) => opzione(u, esc(r.inGioco[u]))).join('')}
+        <option disabled>──────────</option>
+        ${opzione(G.CIELO, `${G.EMOJI_CIELO} Cielo: nessun assassino`)}
+      </select>
+      <button class="primary full" data-action="conferma" ${S.scelta ? '' : 'disabled'}>Vota</button>
       ${S.cambiando ? '<button class="link" data-action="annulla-cambio">Lascia il voto com\'era</button>' : ''}`;
-  const ultimi = votanti === uids.length && !chiuso ? '<p class="ok">Hanno votato tutti: pochi secondi per cambiare idea…</p>' : '';
+  const stato = votanti === uids.length && !chiuso ? '<span class="ok">Hanno votato tutti: pochi secondi per cambiare idea…</span>' : `🗳️ ${votanti}/${uids.length} hanno votato`;
 
   return `
-    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
+    <div class="titolo-riga"><h2>${esc(r.name)}</h2><span class="muted">round ${r.round}</span></div>
     ${r.fineVoto ? `<div class="timer" data-fine="${r.fineVoto}" data-durata="${r.durataVoto ?? 1}"><span class="timer-barra"></span><span class="timer-testo"></span></div>` : ''}
     ${carta}
-    <h2>Vota</h2>
-    <section class="panel stack">
+    <section class="panel stack voto">
       ${voto}
-      <p class="muted">Hanno votato ${votanti}/${uids.length}${mancano ? ` · mancano: ${mancano}` : ''}</p>
-      ${ultimi}
+      <p class="muted piccolo">${stato}</p>
     </section>
-    ${classificaStanza(r.classifica, { aperta: false })}
-    ${pannelloGiocatori()}
-    ${bottoneTelefoni()}
-    <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+    ${menuStanza()}`;
 }
 
 function vistaRisultato() {
@@ -733,15 +741,13 @@ function vistaRisultato() {
   const res = r.result;
   if (!res) return '<p class="muted">Calcolo del risultato…</p>';
   return `
-    <div class="titolo-riga"><h2>${esc(r.name)} · round ${r.round}</h2>${bottoneMazzo()}</div>
+    <div class="titolo-riga"><h2>${esc(r.name)}</h2><span class="muted">round ${r.round}</span></div>
     ${tabellaRisultato(res, nomeDi)}
-    ${classificaStanza(r.classifica)}
     ${sonoHost()
     ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
     : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
-    ${pannelloGiocatori()}
-    ${bottoneTelefoni()}
-    <p><button class="link" data-action="esci">Lascia la stanza</button>${sonoHost() && !S.rete ? ' · <button class="link" data-action="chiudi-stanza">Chiudi la stanza per tutti</button>' : ''}</p>`;
+    ${classificaStanza(r.classifica, { aperta: false })}
+    ${menuStanza({ classifica: false })}`;
 }
 
 // Il capo sceglie il timer prima di avviare; gli altri lo vedono. Senza scelta vale 10 minuti, 0 = spento.
@@ -763,7 +769,7 @@ function classificaStanza(classifica, { aperta = true } = {}) {
   const corpo = righe.length
     ? `<ol class="classifica">${righe.map((r) => `<li><span>${esc(r.nome)}</span><strong>${r.punti} <small>pt · ${r.vinte}/${r.partite} vinte</small></strong></li>`).join('')}</ol>`
     : '<p class="muted">Ancora nessuna partita finita in questa stanza.</p>';
-  return `<details class="panel" ${aperta ? 'open' : ''}><summary>🏆 Classifica della stanza</summary>${corpo}</details>`;
+  return `<details class="panel" data-memo="classifica" ${aperta || aperti.has('classifica') ? 'open' : ''}><summary>🏆 Classifica della stanza</summary>${corpo}</details>`;
 }
 
 // Banner, ruoli e voti di tutti, curiosità e scarti: uguale online e senza campo.
@@ -1462,7 +1468,6 @@ document.addEventListener('click', (e) => {
     avvia: () => tenta(avviaPartita),
     gira: () => { S.coperta = !S.coperta; render(); },
     mazzo: apriMazzo,
-    scegli: () => scegli(uid),
     conferma: () => tenta(confermaVoto),
     'cambia-voto': cambiaVoto,
     'chiudi-stanza': () => tenta(chiudiStanza),
@@ -1500,6 +1505,13 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.dataset.change === 'voto') {
+    if (S.scelta && S.scelta !== e.target.value) S.cambi++;
+    S.scelta = e.target.value || null;
+    const $c = document.querySelector('[data-action=conferma]');
+    if ($c) { $c.disabled = !S.scelta; $c.textContent = S.scelta ? `Vota ${nomeDi(S.scelta)}` : 'Vota'; }
+    return;
+  }
   if (!sonoHost()) return;
   if (e.target.dataset.change === 'timer') tenta(() => update(roomRef(), { timer: Number(e.target.value) || TIMER_DEFAULT }));
   if (e.target.dataset.change === 'timer-attivo') tenta(() => update(roomRef(), { timer: e.target.checked ? TIMER_DEFAULT : 0 }));
