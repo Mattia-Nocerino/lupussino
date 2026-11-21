@@ -9,6 +9,8 @@ import {
 } from './dati.js';
 import { firebaseConfig } from './firebase-config.js';
 import * as G from './game.js';
+import * as T from './traditori.js';
+import * as PR from './prove.js';
 import * as O from './offline.js';
 import * as P from './p2p.js';
 import { Capo, Ospite } from './rete.js';
@@ -49,6 +51,7 @@ const S = {
 let unsubStanze = null;
 let unsubRoom = null;
 let unsubConnessione = null;
+let unsubNotte = null;
 let offsetServer = 0; // differenza tra l'orologio del server e quello del telefono
 onValue(ref(dbFirebase, '.info/serverTimeOffset'), (snap) => { offsetServer = snap.val() ?? 0; });
 
@@ -175,7 +178,7 @@ async function entraInStanza(id, { soloSeGiaDentro = false } = {}) {
   if (!room.players?.[S.user.uid]) {
     if (soloSeGiaDentro) { localStorage.removeItem('lupussino.room'); return; }
     if (room.status === 'playing') return toast('Partita già in corso, riprova dopo.');
-    if (Object.keys(room.players ?? {}).length >= G.MAX_GIOCATORI) return toast('Stanza piena.');
+    if (Object.keys(room.players ?? {}).length >= T.MAX) return toast('Stanza piena.');
     await set(ref(db, `${roomPath(id)}/players/${S.user.uid}`), mioGiocatore());
   }
   osservaStanza(id);
@@ -193,7 +196,8 @@ function osservaStanza(id) {
     }
     S.room = snap.val();
     const inGioco = !!S.room.inGioco?.[S.user.uid];
-    if (S.room.status === 'playing' && inGioco && S.manoRound !== S.room.round) caricaMano();
+    if (S.room.status === 'playing' && S.room.tr) trOsserva();
+    else if (S.room.status === 'playing' && inGioco && S.manoRound !== S.room.round) caricaMano();
     if (S.room.status === 'playing' && sonoHost() && tuttiHannoVotato()) chiudiVotoTraPoco();
     if (S.room.status === 'playing' && sonoHost() && S.room.fineVoto) chiudiVotoAllaScadenza();
     controllaCapo();
@@ -224,6 +228,8 @@ function lasciaLocalmente() {
   disattivaPresenza();
   unsubRoom?.();
   unsubRoom = null;
+  unsubNotte?.();
+  unsubNotte = null;
   clearTimeout(controllaCapo.timer);
   localStorage.removeItem('lupussino.room');
   Object.assign(S, { roomId: null, room: null, mano: null, manoRound: null, mioVoto: null });
@@ -264,6 +270,7 @@ async function rimuoviGiocatore(uid) {
   if (!confirm(`Rimuovere ${nomeDi(uid)} dalla stanza?${avviso}`)) return;
   const modifiche = { [`players/${uid}`]: null };
   if (inGioco) Object.assign(modifiche, { [`inGioco/${uid}`]: null, [`voted/${uid}`]: null });
+  if (inGioco && S.room.tr) modifiche[`tr/vivi/${uid}`] = null; // modalità Traditori: esce dal gioco come un eliminato
   await update(roomRef(), modifiche);
   S.rete?.capo?.scollega(uid);
 }
@@ -299,6 +306,7 @@ async function controllaCapo() {
 // e conserva il mazzo completo in un nodo leggibile solo dal capo stanza. Tutto in una scrittura atomica.
 async function avviaPartita() {
   const uids = Object.keys(S.room.players);
+  if (traditoriScelti()) return avviaTraditori();
   if (!G.puoIniziare(uids.length)) return toast(`Servono da ${G.MIN_GIOCATORI} a ${G.MAX_GIOCATORI} giocatori.`);
   const nomi = Object.fromEntries(uids.map((u) => [u, S.room.players[u].nome]));
   const { assegnazioni, scarti } = G.distribuisci(uids);
@@ -467,7 +475,7 @@ async function apriClassifica() {
 }
 
 async function nuovaPartita() {
-  await update(roomRef(), { status: 'lobby', inGioco: null, voted: null, result: null, fineVoto: null, durataVoto: null });
+  await update(roomRef(), { status: 'lobby', inGioco: null, voted: null, result: null, fineVoto: null, durataVoto: null, tr: null });
 }
 
 // Il boss (account Google di Mattia, deciso nelle regole del database) può eliminare qualsiasi stanza.
@@ -490,7 +498,10 @@ async function eliminaStanza(id) {
   const r = S.tutteLeStanze?.find((x) => x.id === id);
   const avviso = r?.status === 'playing' ? ' C\'è una partita in corso: i giocatori verranno buttati fuori.' : '';
   if (!confirm(`Eliminare "${r?.name ?? id}"?${avviso}`)) return;
-  await update(ref(db), { [`rooms/${id}`]: null, [`hands/${id}`]: null, [`secret/${id}`]: null, [`votes/${id}`]: null });
+  await update(ref(db), {
+    [`rooms/${id}`]: null, [`hands/${id}`]: null, [`secret/${id}`]: null, [`votes/${id}`]: null,
+    [`notte/${id}`]: null, [`azioni/${id}`]: null, [`traditori/${id}`]: null,
+  });
   toast('Stanza eliminata');
 }
 
@@ -499,7 +510,7 @@ async function svuotaDatabase() {
   if (!confirm('Svuotare TUTTO il database? Spariscono stanze, partite, classifiche e profili di tutti. Non si torna indietro.')) return;
   const parola = prompt('Ultima conferma: scrivi SVUOTA per cancellare tutto.');
   if (parola?.trim() !== 'SVUOTA') return toast('Annullato: niente è stato cancellato.');
-  await update(ref(db), { rooms: null, hands: null, secret: null, votes: null, games: null, users: null });
+  await update(ref(db), { rooms: null, hands: null, secret: null, votes: null, games: null, users: null, notte: null, azioni: null, traditori: null });
   toast('Database svuotato');
 }
 
@@ -556,8 +567,12 @@ function render() {
   if (!S.user) return ($app.innerHTML = vistaLogin());
   if (!S.room && S.vista === 'classifica') return ($app.innerHTML = vistaClassifica());
   if (!S.room) return ($app.innerHTML = vistaHome());
-  const viste = { lobby: vistaLobby, playing: vistaPartita, ended: vistaRisultato };
+  // durante una prova non si ridisegna la pagina (si perderebbero tastiera e gioco): si aggiorna solo il contatore
+  if (provaInCorso()) return aggiornaStatoTr();
+  const tr = S.room.status === 'playing' && S.room.tr;
+  const viste = { lobby: vistaLobby, playing: tr ? vistaTraditori : vistaPartita, ended: S.room.result?.modalita === 'traditori' ? vistaRisultatoTr : vistaRisultato };
   $app.innerHTML = avvisoRete() + (viste[S.room.status]?.() ?? '');
+  if (tr) montaProva();
   if (S.room.status === 'ended' && S.room.result) {
     const io = Object.values(S.room.result.vincitori ?? {}).includes(S.user.uid);
     festeggia(`${S.roomId}/${S.room.round}`, S.room.result, S.room.result.vincitore === G.PAREGGIO ? 'Non vince nessuno' : io ? 'Hai vinto 🎉' : 'Hai perso');
@@ -581,8 +596,8 @@ function listaStanze() {
     const stato = { playing: 'partita in corso', ended: 'tra una partita e l\'altra' }[r.status] ?? 'in attesa';
     const bottone = dentro
       ? `<button class="primary" data-action="entra" data-id="${esc(r.id)}">Rientra</button>`
-      : `<button data-action="entra" data-id="${esc(r.id)}" ${n >= G.MAX_GIOCATORI || r.status === 'playing' ? 'disabled' : ''}>Entra</button>`;
-    return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${n}/${G.MAX_GIOCATORI} · ${stato}${dentro ? ' · ci sei dentro' : ''}</span></div>
+      : `<button data-action="entra" data-id="${esc(r.id)}" ${n >= T.MAX || r.status === 'playing' ? 'disabled' : ''}>Entra</button>`;
+    return `<li><div><strong>${esc(r.name)}</strong><br><span class="muted">${n}/${T.MAX}${r.modalita === 'traditori' && n >= T.MIN ? ' · 😈 Traditori' : ''} · ${stato}${dentro ? ' · ci sei dentro' : ''}</span></div>
       ${bottone}</li>`;
   }).join('');
   return stanze ? `<ul class="list">${stanze}</ul>` : '<p class="muted">Nessuna stanza aperta. Creane una!</p>';
@@ -673,18 +688,23 @@ function menuStanza({ giocatori = true, classifica = true, telefoni = true } = {
 function vistaLobby() {
   const r = S.room;
   const uids = Object.keys(r.players);
-  const ok = G.puoIniziare(uids.length);
+  const n = uids.length;
+  const trOn = traditoriScelti();
+  const ok = trOn || G.puoIniziare(n);
+  const perche = n < G.MIN_GIOCATORI ? `Servono almeno ${G.MIN_GIOCATORI} giocatori.`
+    : `La partita classica arriva a ${G.MAX_GIOCATORI} giocatori: con più gente si gioca solo a Traditori.`;
   return `
     <h2>${esc(r.name)}</h2>
     <section class="panel">
-      <p class="muted">${uids.length} giocatori · ${uids.length + G.CARTE_EXTRA} carte</p>
+      <p class="muted">${n} giocatori · ${trOn ? `${T.numeroTraditori(n)} Traditori nascosti` : `${n + G.CARTE_EXTRA} carte`}</p>
       ${listaGiocatori()}
     </section>
+    ${sceltaTraditori(n)}
     ${sceltaTimer(r)}
     ${bottoneTelefoni()}
     ${sonoHost()
-    ? `<button class="primary full" data-action="avvia" ${ok ? '' : 'disabled'}>Avvia partita</button>
-       ${ok ? '' : `<p class="muted">Servono almeno ${G.MIN_GIOCATORI} giocatori.</p>`}`
+    ? `<button class="primary full" data-action="avvia" ${ok ? '' : 'disabled'}>${trOn ? '😈 Avvia i Traditori' : 'Avvia partita'}</button>
+       ${ok ? '' : `<p class="muted">${perche}</p>`}`
     : `<p class="muted">In attesa che ${esc(r.players[r.hostUid]?.nome)} avvii la partita…</p>`}
     ${menuStanza({ giocatori: false, telefoni: false })}`;
 }
@@ -804,6 +824,7 @@ function bottoneMazzo() {
 }
 
 function apriMazzo() {
+  if (S.room && (S.room.tr || traditoriScelti() || S.room.result?.modalita === 'traditori')) return mostraRegole(); // ai Traditori non c'è mazzo
   if (S.off) {
     const n = S.off.fase === 'setup' ? Object.keys(S.off.giocatori).length : S.off.ordine.length;
     return mostraMazzo(n, S.off.fase === 'setup' ? `Con ${n} giocatori il mazzo sarebbe` : `Mazzo di questa partita (${n} giocatori)`);
@@ -839,7 +860,10 @@ function festeggia(chiave, result, sotto) {
   if (festeggia.fatto === chiave) return;
   festeggia.fatto = chiave;
   const { vincitore } = result;
-  const testi = {
+  const testi = result.modalita === 'traditori' ? {
+    [G.BUONI]: ['Vincono i Fedeli!', T.EMOJI[T.FEDELE]],
+    [G.CATTIVI]: ['Vincono i Traditori!', T.EMOJI[T.TRADITORE]],
+  } : {
     [G.BUONI]: ['Vincono i buoni!', '⚖️'],
     [G.CATTIVI]: ['Vincono i cattivi!', '🔪'],
     [G.PAREGGIO]: ['Pareggio!', '🤝'],
@@ -1317,6 +1341,540 @@ async function uniscitiRete() {
   }
 }
 
+// ---------- modalità Traditori ----------
+// Partita lunga a eliminazione (vedi js/traditori.js). Il capo stanza fa da arbitro come nella classica:
+// chiude le fasi (allo scadere o quando hanno fatto tutti), conta i voti e scrive l'esito.
+// Dati: rooms/{id}/tr (pubblico: fase, vivi, eventi), secret/{id}/{round} (ruoli, premi, storia),
+// hands/{id}/{round}/{uid} (la tua carta e i tuoi premi), azioni/{id}/{chiave}/{uid} (voti, sospetti, prove),
+// notte/{id}/{chiave}/{uid} (scelte dei Traditori, leggibili solo da loro), traditori/{id}/{round}/{uid} (per le regole).
+
+const traditoriScelti = (r = S.room) => r?.modalita === 'traditori' && !S.rete && T.puoGiocare(Object.keys(r.players ?? {}).length);
+const vivo = (uid) => !!S.room?.tr?.vivi?.[uid];
+const viviUids = () => Object.keys(S.room?.tr?.vivi ?? {}).filter((u) => u in (S.room.inGioco ?? {}));
+const fattoOra = (uid) => !!S.room?.tr?.chiave && S.room.tr.fatto?.[uid] === S.room.tr.chiave;
+const eventiTr = (t = S.room?.tr) => Object.values(t?.eventi ?? {});
+const pillTr = (ruolo, testo) => `<span class="pill ${T.squadra(ruolo)}">${T.EMOJI[ruolo]} ${esc(testo)}</span>`;
+const SCELTE_FASE = ['tavola', 'ballottaggio', 'notte', 'prova', 'finale'];
+
+// Lo switch appare solo da 7 giocatori in su (e solo online).
+function sceltaTraditori(n) {
+  if (S.rete || !T.puoGiocare(n)) return '';
+  const on = traditoriScelti();
+  if (!sonoHost()) return on ? `<p class="muted">😈 Modalità Traditori: ${T.numeroTraditori(n)} Traditori, notti, prove e finale.</p>` : '';
+  return `<section class="panel timer-scelta">
+    <label><input type="checkbox" data-change="traditori" ${on ? 'checked' : ''}><span>😈 Modalità Traditori</span><output>${on ? 'attiva' : 'spenta'}</output></label>
+    <p class="muted piccolo">Partita lunga: tavola rotonda, omicidi di notte, prove per scudi, pugnali e buste, finale a ${T.SOGLIA_FINALE}. Da ${T.MIN} a ${T.MAX} giocatori.</p></section>`;
+}
+
+// Nuova fase: tiene vivi, giorno ed eventi, azzera il resto. La chiave identifica la fase nelle regole.
+function faseTr(base, fase, extra = {}, round = S.room.round) {
+  const n = (base.n ?? 0) + 1;
+  const durata = fase === 'tavola' ? (minutiTimer(S.room) ? minutiTimer(S.room) * 60_000 : null) : (T.DURATA[fase] ?? null);
+  return {
+    giorno: base.giorno, vivi: base.vivi, eventi: base.eventi ?? null, traditori: base.traditori,
+    n, chiave: `${round}-${n}`, fase, fine: durata ? ora() + durata : null, durata, ...extra,
+  };
+}
+
+async function avviaTraditori() {
+  const uids = Object.keys(S.room.players);
+  if (!T.puoGiocare(uids.length)) return toast(`Servono da ${T.MIN} a ${T.MAX} giocatori.`);
+  const nomi = Object.fromEntries(uids.map((u) => [u, S.room.players[u].nome]));
+  const ruoli = T.assegnaRuoli(uids);
+  const parola = T.scegliParola();
+  const mani = T.mani(ruoli, nomi, parola);
+  const round = (S.room.round ?? 0) + 1;
+  const base = { giorno: 1, vivi: Object.fromEntries(uids.map((u) => [u, true])), traditori: T.numeroTraditori(uids.length), n: 0 };
+  // primo giorno: parola segreta, ordine casuale per dirla, e il cielo è ammesso
+  const tr = faseTr(base, 'tavola', { cielo: true, ordine: G.mescola(uids) }, round);
+  const modifiche = {
+    [`secret/${S.roomId}/${round}`]: { ruoli, ...parola, premi: null, storia: null },
+    [`${roomPath()}/status`]: 'playing',
+    [`${roomPath()}/round`]: round,
+    [`${roomPath()}/inGioco`]: nomi,
+    [`${roomPath()}/iniziatoIl`]: serverTimestamp(),
+    [`${roomPath()}/nGiocatori`]: uids.length,
+    [`${roomPath()}/voted`]: null,
+    [`${roomPath()}/result`]: null,
+    [`${roomPath()}/fineVoto`]: null,
+    [`${roomPath()}/durataVoto`]: null,
+    [`${roomPath()}/tr`]: tr,
+  };
+  for (const u of uids) {
+    modifiche[`hands/${S.roomId}/${round}/${u}`] = { ...mani[u], compagni: Object.keys(ruoli).filter((x) => x !== u && ruoli[u] === T.TRADITORE && ruoli[x] === T.TRADITORE) };
+    if (ruoli[u] === T.TRADITORE) modifiche[`traditori/${S.roomId}/${round}/${u}`] = true;
+  }
+  await update(ref(db), modifiche);
+}
+
+// A ogni aggiornamento della stanza: ricarico la mia carta quando cambia fase, e il capo programma la chiusura.
+function trOsserva() {
+  const t = S.room.tr;
+  const io = S.user.uid;
+  if (S.manoRound !== S.room.round) { S.manoRound = S.room.round; S.coperta = true; S.mano = null; }
+  if (S.room.inGioco?.[io] && S.trChiave !== t.chiave) {
+    Object.assign(S, { trChiave: t.chiave, scelta: null, trMio: null, trCambia: false, trPugnale: false, trNotte: null });
+    caricaManoTr();
+  }
+  if (!sonoHost() || !SCELTE_FASE.includes(t.fase)) return;
+  if (t.fine && trOsserva.fine !== t.chiave) {
+    trOsserva.fine = t.chiave;
+    setTimeout(() => { if (S.room?.tr?.chiave === t.chiave && sonoHost()) trChiudi(t.chiave); }, Math.max(0, t.fine - ora()) + 1500);
+  }
+  const attesi = viviUids();
+  if (attesi.length && attesi.every(fattoOra) && trOsserva.tutti !== t.chiave) {
+    trOsserva.tutti = t.chiave;
+    const grazia = { notte: 2000, prova: 1000 }[t.fase] ?? ULTIMI_SECONDI_MS; // ai voti restano pochi secondi per cambiare idea
+    setTimeout(() => {
+      if (S.room?.tr?.chiave === t.chiave && sonoHost() && viviUids().every(fattoOra)) trChiudi(t.chiave);
+      else trOsserva.tutti = null;
+    }, grazia);
+  }
+}
+
+async function caricaManoTr() {
+  const { round, tr: t } = S.room;
+  const [mano, mia] = await Promise.all([
+    get(ref(db, `hands/${S.roomId}/${round}/${S.user.uid}`)),
+    get(ref(db, `azioni/${S.roomId}/${t.chiave}/${S.user.uid}`)).catch(() => null),
+  ]);
+  if (S.room?.tr?.chiave !== t.chiave) return;
+  S.mano = mano.val();
+  S.trMio = mia?.val() ?? null;
+  ascoltaNotte();
+  render();
+}
+
+// Di notte i Traditori vedono in diretta le scelte dei compagni.
+function ascoltaNotte() {
+  unsubNotte?.();
+  unsubNotte = null;
+  const t = S.room?.tr;
+  if (t?.fase !== 'notte' || S.mano?.ruolo !== T.TRADITORE || !vivo(S.user.uid)) return;
+  unsubNotte = onValue(ref(db, `notte/${S.roomId}/${t.chiave}`), (snap) => {
+    S.trNotte = snap.val() ?? {};
+    if (S.trNotte[S.user.uid] && !S.trMio) S.trMio = { b: S.trNotte[S.user.uid] };
+    render();
+  }, () => {});
+}
+
+async function inviaTr(dati) {
+  const t = S.room.tr;
+  const io = S.user.uid;
+  const modifiche = {};
+  if (t.fase === 'notte' && S.mano?.ruolo === T.TRADITORE) modifiche[`notte/${S.roomId}/${t.chiave}/${io}`] = dati.b;
+  else modifiche[`azioni/${S.roomId}/${t.chiave}/${io}`] = dati;
+  if (vivo(io)) modifiche[`${roomPath()}/tr/fatto/${io}`] = t.chiave;
+  await update(ref(db), modifiche);
+  if (S.room?.tr?.chiave !== t.chiave) return;
+  S.trMio = dati;
+  S.trCambia = false;
+  if (t.fase === 'prova') S.provaFinita = t.chiave;
+  render();
+}
+
+async function inviaScelta() {
+  const b = S.scelta;
+  if (!b) return;
+  const t = S.room.tr;
+  if (!vivo(S.user.uid)) return inviaTr({ scommessa: b });
+  const dati = { b };
+  if (S.trPugnale && S.mano?.premi?.pugnale && ['tavola', 'ballottaggio'].includes(t.fase) && b !== G.CIELO) dati.pugnale = true;
+  await inviaTr(dati);
+}
+
+// Solo il capo: chiude la fase corrente e scrive l'esito in un'unica scrittura.
+async function trChiudi(chiave) {
+  if (trChiudi.chiave === chiave) return;
+  const r = S.room;
+  const t = r?.tr;
+  if (!t || t.chiave !== chiave || !sonoHost() || r.status !== 'playing') return;
+  trChiudi.chiave = chiave;
+  try {
+    const round = r.round;
+    const [segretoSnap, azioniSnap, notteSnap] = await Promise.all([
+      get(ref(db, `secret/${S.roomId}/${round}`)),
+      get(ref(db, `azioni/${S.roomId}/${chiave}`)),
+      t.fase === 'notte' ? get(ref(db, `notte/${S.roomId}/${chiave}`)) : null,
+    ]);
+    const segreto = segretoSnap.val();
+    const { ruoli } = segreto;
+    const premi = segreto.premi ?? {};
+    const azioni = azioniSnap.val() ?? {};
+    const vivi = viviUids();
+    const sec = (p) => `secret/${S.roomId}/${round}/${p}`;
+    const mano = (u, p) => `hands/${S.roomId}/${round}/${u}/${p}`;
+    const modifiche = {};
+    const eventi = eventiTr(t);
+    const senza = (u) => { const v = { ...t.vivi }; delete v[u]; return v; };
+    let nuovo;
+    let vincitore = null;
+
+    if (t.fase === 'tavola' || t.fase === 'ballottaggio') {
+      const bersagli = t.fase === 'ballottaggio' ? Object.keys(t.candidati ?? {}) : vivi;
+      const conta = T.contaVoti(azioni, { votanti: vivi, bersagli, cielo: !!t.cielo, premi });
+      for (const u of conta.pugnali) { modifiche[sec(`premi/${u}/pugnale`)] = null; modifiche[mano(u, 'premi/pugnale')] = null; }
+      const esito = T.esitoTavola(conta, { ballottaggio: t.fase === 'ballottaggio' });
+      const scommesse = Object.fromEntries(Object.entries(azioni)
+        .filter(([u, a]) => !vivi.includes(u) && u in (r.inGioco ?? {}) && a?.scommessa).map(([u, a]) => [u, a.scommessa]));
+      const voti = conta.validi;
+      if (esito.pari) {
+        eventi.push({ tipo: 'pari', g: t.giorno, voti, pari: esito.pari });
+        nuovo = faseTr({ ...t, eventi }, 'ballottaggio', { candidati: Object.fromEntries(esito.pari.map((u) => [u, true])), annuncio: { tipo: 'pari', voti, pari: esito.pari } });
+      } else if (esito.nessuno) {
+        eventi.push({ tipo: 'nessuno', g: t.giorno, voti });
+        nuovo = faseTr({ ...t, eventi }, 'esito', { annuncio: { tipo: 'nessuno', voti } });
+      } else {
+        const u = esito.espulso;
+        const ev = { tipo: 'espulso', g: t.giorno, uid: u, ruolo: ruoli[u], voti, ...(esito.sorteggio && { sorteggio: esito.sorteggio }) };
+        eventi.push(ev);
+        if (Object.keys(scommesse).length) modifiche[sec(`storia/scommesse/${chiave}`)] = { ...scommesse, espulso: u };
+        nuovo = faseTr({ ...t, vivi: senza(u), eventi }, 'esito', { annuncio: ev });
+        vincitore = T.vincitoreSubito(nuovo, ruoli);
+      }
+    } else if (t.fase === 'notte') {
+      const sondaggio = {};
+      for (const u of vivi) {
+        const b = azioni[u]?.b;
+        if (ruoli[u] !== T.TRADITORE && b && b !== u && vivi.includes(b)) sondaggio[u] = b;
+      }
+      if (Object.keys(sondaggio).length) modifiche[sec(`storia/sondaggi/${t.giorno}`)] = sondaggio;
+      const sospetti = {};
+      for (const b of Object.values(sondaggio)) sospetti[b] = (sospetti[b] ?? 0) + 1;
+      const esito = T.esitoNotte(notteSnap?.val() ?? {}, { ruoli, tr: t, premi });
+      let vivi2 = t.vivi;
+      let ev;
+      if (esito.salvo) {
+        modifiche[sec(`premi/${esito.salvo}/scudo`)] = null;
+        modifiche[mano(esito.salvo, 'premi/scudo')] = null;
+        ev = { tipo: 'salvo', g: t.giorno };
+      } else if (esito.ucciso) {
+        vivi2 = senza(esito.ucciso);
+        ev = { tipo: 'ucciso', g: t.giorno, uid: esito.ucciso };
+      } else ev = { tipo: 'nessuno-notte', g: t.giorno };
+      eventi.push(ev);
+      nuovo = faseTr({ ...t, giorno: t.giorno + 1, vivi: vivi2, eventi }, 'mattina', { annuncio: { ...ev, sospetti } });
+      vincitore = T.vincitoreSubito(nuovo, ruoli);
+    } else if (t.fase === 'prova') {
+      const chi = T.vincitoreProva(azioni, { tr: t, premio: t.premio, premi });
+      if (chi && t.premio === 'busta') {
+        modifiche[mano(chi, `premi/buste/g${t.giorno}`)] = { g: t.giorno, nomi: T.busta(chi, { ruoli, tr: t }).map((u) => r.inGioco[u]) };
+      } else if (chi) {
+        modifiche[sec(`premi/${chi}/${t.premio}`)] = true;
+        modifiche[mano(chi, `premi/${t.premio}`)] = true;
+      }
+      modifiche[sec('storia/prove')] = (segreto.storia?.prove ?? 0) + 1;
+      nuovo = faseTr(t, 'tavola', { annuncio: { tipo: 'prova', premio: t.premio, vinto: !!chi } });
+    } else if (t.fase === 'finale') {
+      const esito = T.esitoFinale(azioni, { votanti: vivi });
+      const voti = Object.fromEntries(vivi.map((u) => [u, { b: azioni[u]?.b && azioni[u].b !== u ? azioni[u].b : G.CIELO }]));
+      if (esito.fine) {
+        eventi.push({ tipo: 'cielo', g: t.giorno, voti });
+        nuovo = { ...t, eventi };
+        vincitore = T.vincitoreFinale(t, ruoli);
+      } else {
+        const ev = { tipo: 'finale', g: t.giorno, uid: esito.espulso, voti, ...(esito.sorteggio && { sorteggio: esito.sorteggio }) };
+        eventi.push(ev);
+        nuovo = faseTr({ ...t, vivi: senza(esito.espulso), eventi }, 'esito', { finale: true, annuncio: ev });
+        if (Object.keys(nuovo.vivi).length <= 2) vincitore = T.vincitoreFinale(nuovo, ruoli);
+      }
+    }
+    if (vincitore) return await fineTraditori(vincitore, nuovo, segreto, modifiche);
+    modifiche[`${roomPath()}/tr`] = nuovo;
+    await update(ref(db), modifiche);
+  } catch (e) {
+    console.error(e); toast(e.message);
+    trChiudi.chiave = null;
+  }
+}
+
+// Solo il capo: dopo l'annuncio del mattino o dell'espulsione, si passa alla fase successiva.
+async function trAvanti() {
+  const t = S.room.tr;
+  if (!sonoHost() || !['mattina', 'esito'].includes(t.fase)) return;
+  let nuovo;
+  if (t.finale || viviUids().length <= T.SOGLIA_FINALE) nuovo = faseTr(t, 'finale');
+  else if (t.fase === 'esito') nuovo = faseTr(t, 'notte');
+  else {
+    const fatti = fattiPartita();
+    const tipi = Object.keys(PR.TIPI).filter((x) => x !== 'ricordi' || fatti.length >= 4);
+    const premi = Object.keys(T.PREMI);
+    nuovo = faseTr(t, 'prova', {
+      premio: premi[Math.floor(G.casuale() * premi.length)],
+      prova: { tipo: tipi[Math.floor(G.casuale() * tipi.length)], seme: Math.floor(G.casuale() * 2 ** 32) },
+    });
+  }
+  await update(roomRef(), { tr: nuovo });
+}
+
+async function fineTraditori(vincitore, t, segreto, modifiche) {
+  const r = S.room;
+  const presenti = (u) => u in (r.inGioco ?? {});
+  const ruoli = Object.fromEntries(Object.entries(segreto.ruoli).filter(([u]) => presenti(u)));
+  const eventi = eventiTr(t);
+  const storia = {
+    voti: Object.fromEntries(eventi.map((e, i) => [i, e.voti ? Object.fromEntries(Object.entries(e.voti).map(([u, v]) => [u, v.b])) : null]).filter(([, v]) => v)),
+    sondaggi: segreto.storia?.sondaggi,
+    scommesse: segreto.storia?.scommesse,
+    prove: segreto.storia?.prove ?? 0,
+  };
+  const punti = T.punteggi(ruoli, t, storia, vincitore);
+  const vincitori = Object.keys(ruoli).filter((u) => T.squadra(ruoli[u]) === vincitore);
+  G.bonusSerie(punti, r.classifica, vincitori);
+  const ospiti = Object.fromEntries(Object.keys(ruoli).filter((u) => r.players?.[u]?.ospite).map((u) => [u, true]));
+  const partita = {
+    modalita: 'traditori', vincitore, vincitori, ruoli, punti, ospiti, giocatori: r.inGioco,
+    eventi, vivi: t.vivi ?? {}, parola: segreto.parola, categoria: segreto.categoria, finitaIl: Date.now(),
+  };
+  Object.assign(modifiche, {
+    [`${roomPath()}/status`]: 'ended',
+    [`${roomPath()}/result`]: partita,
+    [`${roomPath()}/classifica`]: G.aggiungiAllaClassifica(r.classifica, partita),
+    [`${roomPath()}/tr`]: null,
+    [`games/${S.roomId}_${r.round}`]: { roomId: S.roomId, round: r.round, hostUid: S.user.uid, ...partita, finitaIl: serverTimestamp() },
+  });
+  await update(ref(db), modifiche);
+}
+
+// Fatti pubblici della partita per la prova "Chi si ricorda?".
+function fattiPartita() {
+  const fatti = [];
+  const nome = (u) => S.room.inGioco?.[u] ?? '???';
+  for (const e of eventiTr()) {
+    if (e.tipo === 'ucciso') fatti.push({ domanda: `Chi è stato ucciso la notte ${e.g}?`, giusta: e.uid });
+    if (e.tipo === 'espulso') fatti.push({ domanda: `Chi è stato espulso il giorno ${e.g}?`, giusta: e.uid });
+    for (const [u, v] of Object.entries(e.voti ?? {})) {
+      if (v?.b && v.b !== G.CIELO) fatti.push({ domanda: `Il giorno ${e.g}, ${nome(u)} ha votato…`, giusta: v.b });
+    }
+  }
+  return fatti;
+}
+
+const provaInCorso = () => S.room?.status === 'playing' && S.room.tr?.fase === 'prova'
+  && S.provaChiave === S.room.tr.chiave && S.provaEl?.isConnected && S.provaFinita !== S.room.tr.chiave && S.provaIniziata;
+
+function montaProva() {
+  const $posto = document.getElementById('prova-gioco');
+  const t = S.room.tr;
+  if (!$posto) return;
+  if (S.provaChiave !== t.chiave) {
+    S.provaChiave = t.chiave;
+    S.provaIniziata = false;
+    S.provaEl = PR.creaGioco({ tipo: t.prova.tipo, seme: t.prova.seme, fatti: fattiPartita(), nomi: S.room.inGioco }, (ris) => tenta(() => inviaTr(ris)));
+    S.provaEl.addEventListener('click', () => { S.provaIniziata = true; }, { once: true });
+  }
+  $posto.append(S.provaEl);
+}
+
+function statoTr() {
+  const t = S.room.tr;
+  const attesi = viviUids();
+  const fatti = attesi.filter(fattoOra).length;
+  const verbo = { notte: 'hanno scelto', prova: 'hanno finito' }[t.fase] ?? 'hanno votato';
+  return fatti === attesi.length && t.fase !== 'prova' ? '<span class="ok">Hanno fatto tutti: pochi secondi e si chiude…</span>' : `${fatti}/${attesi.length} ${verbo}`;
+}
+function aggiornaStatoTr() {
+  const $s = document.getElementById('tr-stato');
+  if ($s) $s.innerHTML = statoTr();
+}
+
+// Come è uscito di scena un giocatore (per la lista dei vivi e il risultato).
+function uscita(u, eventi) {
+  const e = eventi.find((x) => x.uid === u && ['ucciso', 'espulso', 'finale'].includes(x.tipo));
+  if (!e) return null;
+  if (e.tipo === 'ucciso') return `☠️ ucciso la notte ${e.g}`;
+  if (e.tipo === 'espulso') return `🚪 espulso il giorno ${e.g} · ${T.EMOJI[e.ruolo]} ${e.ruolo}`;
+  return '🚪 espulso nel finale';
+}
+
+const listaVoti = (voti, cielo = 'Nessuno') => {
+  const righe = Object.entries(voti ?? {}).map(([u, v]) => `<li><span>${esc(nomeDi(u))}</span><span>➜ ${v.b === G.CIELO ? `${G.EMOJI_CIELO} ${cielo}` : esc(nomeDi(v.b))}${v.x2 ? ' 🗡️×2' : ''}</span></li>`);
+  return righe.length ? `<ul class="list voti-tr">${righe.join('')}</ul>` : '<p class="muted">Nessun voto.</p>';
+};
+
+function annuncioTr(a) {
+  if (!a) return '';
+  const chi = (u) => `<strong>${esc(nomeDi(u))}</strong>`;
+  const sospetti = Object.entries(a.sospetti ?? {}).sort((x, y) => y[1] - x[1]);
+  const sondaggio = sospetti.length
+    ? `<p class="muted">🕵️ Sospetti dei Fedeli stanotte: ${sospetti.map(([u, k]) => `${esc(nomeDi(u))} ${k}`).join(' · ')}</p>` : '';
+  const testi = {
+    ucciso: () => `<div class="annuncio ko">☠️ Stanotte i Traditori hanno ucciso ${chi(a.uid)}.</div>${sondaggio}`,
+    salvo: () => `<div class="annuncio ok">🛡️ Stanotte non è morto nessuno.</div>${sondaggio}`,
+    'nessuno-notte': () => `<div class="annuncio">🌙 Stanotte non è successo niente.</div>${sondaggio}`,
+    espulso: () => `<div class="annuncio">🚪 ${chi(a.uid)} è stato espulso: era ${pillTr(a.ruolo, a.ruolo)}</div>
+      ${a.sorteggio ? '<p class="muted">Parità anche al ballottaggio: deciso a sorte.</p>' : ''}${listaVoti(a.voti)}`,
+    finale: () => `<div class="annuncio">🚪 ${chi(a.uid)} è stato espulso. Il ruolo resta segreto fino alla fine.</div>
+      ${a.sorteggio ? '<p class="muted">Parità: deciso a sorte.</p>' : ''}${listaVoti(a.voti, 'Finiamo qui')}`,
+    nessuno: () => `<div class="annuncio">${G.EMOJI_CIELO} Oggi nessuno viene espulso.</div>${listaVoti(a.voti)}`,
+    pari: () => `<div class="annuncio">⚖️ Parità tra ${a.pari.map(chi).join(' e ')}: si rivota solo tra loro.</div>${listaVoti(a.voti)}`,
+    prova: () => `<p class="muted">🎯 Prova finita: ${a.vinto ? `qualcuno ha vinto ${T.PREMI[a.premio].emoji} ${T.PREMI[a.premio].nome}` : 'nessuno ha vinto il premio'}.</p>`,
+  };
+  return testi[a.tipo]?.() ?? '';
+}
+
+function cartaTr() {
+  const m = S.mano;
+  const t = S.room.tr;
+  if (!m) return '<div class="carta coperta">Distribuzione carte…</div>';
+  if (S.coperta) return '<div class="carta coperta" data-action="gira"><div>🂠</div><div>Tocca per vedere il tuo ruolo</div></div>';
+  const premi = m.premi ?? {};
+  const buste = Object.values(premi.buste ?? {});
+  const oggetti = [
+    premi.scudo ? `${T.PREMI.scudo.emoji} Scudo: ${T.PREMI.scudo.spiega}` : '',
+    premi.pugnale ? `${T.PREMI.pugnale.emoji} Pugnale: ${T.PREMI.pugnale.spiega}` : '',
+    ...buste.map((b) => `${T.PREMI.busta.emoji} Busta del giorno ${b.g}: ${Object.values(b.nomi ?? {}).map(esc).join(', ')}. Almeno uno è un Traditore.`),
+  ].filter(Boolean);
+  const parola = t.giorno === 1 ? `<div class="evidenza">${m.parola ? `🗝️ ${esc(m.parola)}` : `🗝️ Categoria: ${esc(m.categoria)}`}</div>
+    <div class="muted">${m.parola ? `Categoria: ${esc(m.categoria)}. I Traditori conoscono solo la categoria.` : 'Non conosci la parola dei Fedeli: bluffa!'}</div>` : '';
+  return `<div class="carta scoperta ${m.squadra}" data-action="gira">
+      <div class="ruolo"><span class="pill ${m.squadra} grande">${T.EMOJI[m.ruolo]} ${m.ruolo}</span></div>
+      ${parola}<div>${esc(m.info)}</div>
+      ${oggetti.length ? `<ul class="premi">${oggetti.map((o) => `<li>${o}</li>`).join('')}</ul>` : ''}
+      <p class="muted" style="margin-top:16px">Tocca per coprire</p></div>`;
+}
+
+// Tendina + bottone, uguale per voti, sospetti, vittime e scommesse.
+function sceltaTr({ domanda, opzioni, bottone, nota = '' }) {
+  if (S.trMio && !S.trCambia) {
+    const b = S.trMio.b ?? S.trMio.scommessa;
+    const testo = b === G.CIELO ? `${G.EMOJI_CIELO} ${S.room.tr.fase === 'finale' ? 'Finiamo qui' : 'Nessuno oggi'}` : nomeDi(b);
+    return `<div class="votato"><span>Hai scelto <strong>${esc(testo)}</strong>${S.trMio.pugnale ? ' 🗡️×2' : ''}</span><button class="link" data-action="tr-cambia">Cambia</button></div>`;
+  }
+  const scelta = S.scelta;
+  return `<select data-change="tr-scelta" aria-label="${esc(domanda)}">
+      <option value="" ${scelta ? '' : 'selected'} disabled>${esc(domanda)}</option>
+      ${opzioni.map(([u, testo]) => `<option value="${esc(u)}" ${scelta === u ? 'selected' : ''}>${esc(testo)}</option>`).join('')}
+    </select>${nota}
+    <button class="primary full" data-action="tr-invia" ${scelta ? '' : 'disabled'}>${bottone}</button>`;
+}
+
+function vistaTraditori() {
+  const r = S.room;
+  const t = r.tr;
+  const io = S.user.uid;
+  if (!r.inGioco?.[io]) {
+    return `<h2>${esc(r.name)}</h2><section class="panel"><p>Partita dei Traditori in corso. Entrerai dalla prossima.</p></section>
+      <p><button class="link" data-action="esci">Lascia la stanza</button></p>`;
+  }
+  const vivi = viviUids();
+  const eventi = eventiTr(t);
+  const fantasma = !vivo(io);
+  const altri = (lista) => lista.filter((u) => u !== io).map((u) => [u, nomeDi(u)]);
+  const titoli = {
+    tavola: `☀️ Giorno ${t.giorno}: tavola rotonda`, ballottaggio: `⚖️ Giorno ${t.giorno}: ballottaggio`, notte: `🌙 Notte ${t.giorno}`,
+    mattina: `🌅 Giorno ${t.giorno}`, prova: `🎯 Giorno ${t.giorno}: la prova`, esito: t.finale ? '🏁 Finale' : `☀️ Giorno ${t.giorno}`, finale: '🏁 Finale',
+  };
+  const continua = (testo) => (sonoHost() ? `<button class="primary full" data-action="tr-avanti">${testo}</button>`
+    : '<p class="muted">Quando siete pronti il capo stanza va avanti.</p>');
+  const prossima = () => (t.finale || vivi.length <= T.SOGLIA_FINALE ? '🏁 Al finale' : t.fase === 'esito' ? '🌙 Cala la notte' : '🎯 Alla prova');
+  let corpo = '';
+
+  if (t.fase === 'tavola' || t.fase === 'ballottaggio') {
+    const candidati = t.fase === 'ballottaggio' ? Object.keys(t.candidati ?? {}).filter((u) => vivo(u)) : vivi;
+    const ordine = t.giorno === 1 && t.fase === 'tavola' && t.ordine
+      ? `<p>🗝️ <strong>Parola segreta.</strong> A turno ognuno dice ad alta voce una parola collegata alla sua (guarda la carta), in quest'ordine:</p>
+         <p class="ordine">${Object.values(t.ordine).filter((u) => vivo(u)).map((u) => esc(nomeDi(u))).join(' → ')}</p>
+         <p class="muted piccolo">Poi discutete e votate. Oggi si può scegliere anche ${G.EMOJI_CIELO} Nessuno: se è il più votato non esce nessuno.</p>` : '';
+    const pugnale = S.mano?.premi?.pugnale && !fantasma
+      ? `<label class="check"><input type="checkbox" data-change="tr-pugnale" ${S.trPugnale ? 'checked' : ''}> 🗡️ Usa il pugnale: il mio voto vale doppio (e tutti lo vedranno)</label>` : '';
+    corpo = `${annuncioTr(t.annuncio)}${ordine}
+      ${fantasma
+    ? `<p>👻 Sei un fantasma: non voti, ma puoi scommettere su chi verrà espulso (+${T.PUNTI.scommessa} se indovini).</p>
+         ${sceltaTr({ domanda: 'Chi verrà espulso?', opzioni: candidati.map((u) => [u, nomeDi(u)]), bottone: 'Scommetti' })}`
+    : sceltaTr({
+      domanda: 'Chi espelli?',
+      opzioni: [...altri(candidati), ...(t.cielo ? [[G.CIELO, `${G.EMOJI_CIELO} Nessuno oggi`]] : [])],
+      bottone: 'Vota',
+      nota: pugnale,
+    })}`;
+  } else if (t.fase === 'notte') {
+    if (fantasma) corpo = '<p>🌙 È notte. I Traditori scelgono la vittima, i Fedeli dicono chi sospettano.</p>';
+    else if (S.mano?.ruolo === T.TRADITORE) {
+      const compagni = Object.values(S.mano.compagni ?? {});
+      const vittime = vivi.filter((u) => u !== io && !compagni.includes(u));
+      const scelte = Object.entries(S.trNotte ?? {}).filter(([u]) => u !== io && vivo(u));
+      corpo = `<p>😈 Scegliete chi uccidere stanotte. Vince la vittima più scelta; con la parità decide la sorte.</p>
+        ${scelte.length ? `<ul class="list">${scelte.map(([u, b]) => `<li><span>${esc(nomeDi(u))}</span><span>➜ ${esc(nomeDi(b))}</span></li>`).join('')}</ul>` : ''}
+        ${sceltaTr({ domanda: 'Chi uccidete?', opzioni: vittime.map((u) => [u, nomeDi(u)]), bottone: 'Conferma' })}`;
+    } else {
+      corpo = `<p>🌙 Chi pensi che sia un Traditore? Nessuno vedrà la tua risposta: domattina si vedrà solo il conteggio (+${T.PUNTI.sospettoGiusto} se indovini).</p>
+        ${sceltaTr({ domanda: 'Chi sospetti?', opzioni: altri(vivi), bottone: 'Conferma' })}`;
+    }
+    corpo += '<p class="muted piccolo">Tutti toccano il telefono, così nessuno si tradisce.</p>';
+  } else if (t.fase === 'mattina') {
+    corpo = `${annuncioTr(t.annuncio)}${continua(prossima())}`;
+  } else if (t.fase === 'esito') {
+    corpo = `${annuncioTr(t.annuncio)}${continua(prossima())}`;
+  } else if (t.fase === 'prova') {
+    const premio = T.PREMI[t.premio];
+    corpo = `<div class="annuncio">In palio: ${premio.emoji} <strong>${premio.nome}</strong></div><p class="muted">${premio.spiega}. Chi vince lo saprà solo lui.</p>
+      ${fantasma ? '<p>👻 I vivi stanno giocando.</p>'
+    : fattoOra(io) && S.provaChiave !== t.chiave ? '<p>Hai già giocato: aspetta gli altri.</p>' : '<div id="prova-gioco"></div>'}`;
+  } else if (t.fase === 'finale') {
+    corpo = `<p>🏁 Siete rimasti in ${vivi.length}. Se votate <strong>tutti</strong> ${G.EMOJI_CIELO} Finiamo qui, la partita finisce: se c'è ancora un Traditore vincono loro, altrimenti i Fedeli.
+      Se qualcuno vota un nome, si espelle il più votato (senza rivelare il ruolo) e si rivota.</p>
+      ${annuncioTr(t.annuncio)}
+      ${fantasma ? '<p>👻 Sei un fantasma: guarda come va a finire.</p>'
+    : sceltaTr({ domanda: 'Cosa fai?', opzioni: [[G.CIELO, `${G.EMOJI_CIELO} Finiamo qui`], ...altri(vivi)], bottone: 'Conferma' })}
+      <p class="muted piccolo">Allo scadere del tempo chi non ha votato vale come ${G.EMOJI_CIELO}.</p>`;
+  }
+
+  const giocatori = Object.keys(r.inGioco).map((u) => {
+    const fuori = uscita(u, eventi);
+    return `<li><span>${vivo(u) ? '🙂' : '👻'} ${esc(nomeDi(u))}${u === io ? ' <span class="tag">tu</span>' : ''}${online(u) ? '' : ' <span class="tag">offline</span>'}</span>
+      <span class="muted piccolo">${fuori ?? (fattoOra(u) && SCELTE_FASE.includes(t.fase) ? '✓' : '')}</span></li>`;
+  }).join('');
+
+  return `
+    <div class="titolo-riga"><h2>${titoli[t.fase] ?? esc(r.name)}</h2><span class="muted">${vivi.length} vivi · ${t.traditori} 😈</span></div>
+    ${t.fine ? `<div class="timer" data-fine="${t.fine}" data-durata="${t.durata ?? 1}"><span class="timer-barra"></span><span class="timer-testo"></span></div>` : ''}
+    ${fantasma ? '<p class="fantasma">👻 Sei stato eliminato: resti come fantasma, senza parlare dei ruoli!</p>' : ''}
+    ${cartaTr()}
+    <section class="panel stack voto">
+      ${corpo}
+      ${SCELTE_FASE.includes(t.fase) ? `<p class="muted piccolo" id="tr-stato">${statoTr()}</p>` : ''}
+      ${sonoHost() && SCELTE_FASE.includes(t.fase) ? '<p class="discreto"><button class="link" data-action="tr-chiudi">⏭️ Chiudi ora</button></p>' : ''}
+    </section>
+    <details class="panel" data-memo="tr-giocatori" ${seAperto('tr-giocatori')}><summary>👥 Giocatori (${vivi.length} vivi)</summary><ul class="list">${giocatori}</ul></details>
+    ${menuStanza({ giocatori: false })}`;
+}
+
+function vistaRisultatoTr() {
+  const r = S.room;
+  const res = r.result;
+  const eventi = Object.values(res.eventi ?? {});
+  const vincitori = Object.values(res.vincitori ?? {});
+  const righe = Object.keys(res.ruoli ?? {}).map((u) => `<li>
+      <div class="voto-chi">${pillTr(res.ruoli[u], nomeDi(u))}<small>${vincitori.includes(u) ? '🏆 ' : ''}${res.vivi?.[u] ? '🙂 arrivato alla fine' : esc(uscita(u, eventi) ?? 'uscito')}</small></div>
+      <strong>${res.punti?.[u] ? conSegno(res.punti[u].totale) : ''}</strong></li>`).join('');
+  const racconto = eventi.map((e) => {
+    const n = (u) => esc(nomeDi(u));
+    return {
+      espulso: `☀️ Giorno ${e.g}: espulso ${n(e.uid)} (${T.EMOJI[e.ruolo]} ${e.ruolo})`,
+      nessuno: `☀️ Giorno ${e.g}: nessuno espulso`,
+      pari: `⚖️ Giorno ${e.g}: parità, ballottaggio`,
+      ucciso: `🌙 Notte ${e.g}: ucciso ${n(e.uid)}`,
+      salvo: `🌙 Notte ${e.g}: uno scudo ha salvato la vittima`,
+      finale: `🏁 Finale: espulso ${n(e.uid)} (${T.EMOJI[res.ruoli?.[e.uid]] ?? ''} ${res.ruoli?.[e.uid] ?? ''})`,
+      cielo: `🏁 Finale: tutti al ${G.EMOJI_CIELO}, si chiude`,
+    }[e.tipo];
+  }).filter(Boolean);
+  return `
+    <div class="titolo-riga"><h2>${esc(r.name)}</h2><span class="muted">😈 Traditori</span></div>
+    <div class="banner ${res.vincitore}">Vincono i ${res.vincitore === G.CATTIVI ? 'Traditori' : 'Fedeli'}!</div>
+    ${res.parola ? `<p class="muted" style="text-align:center">La parola segreta era 🗝️ <strong>${esc(res.parola)}</strong> (${esc(res.categoria)})</p>` : ''}
+    <section class="panel"><ul class="list">${righe}</ul></section>
+    <details class="panel" open><summary>📜 Com'è andata</summary><ul class="fatti">${racconto.map((x) => `<li>${x}</li>`).join('')}</ul></details>
+    <details class="panel"><summary>📊 Come sono arrivati i punti</summary><ul class="list">${Object.keys(res.ruoli ?? {}).map((u) => `<li><span>${esc(nomeDi(u))}</span>
+      <span class="muted" style="text-align:right">${Object.values(res.punti?.[u]?.voci ?? {}).map((v) => `${esc(v.m)} ${conSegno(v.p)}`).join('<br>') || 'nessun punto'}</span></li>`).join('')}</ul></details>
+    ${sonoHost()
+    ? '<button class="primary full" data-action="nuova">Nuova partita</button>'
+    : '<p class="muted">In attesa che il capo stanza avvii una nuova partita…</p>'}
+    ${classificaStanza(r.classifica, { aperta: false })}
+    ${menuStanza({ classifica: false })}`;
+}
+
 // ---------- timer di discussione ----------
 // Barra sottile in alto che si consuma; negli ultimi 30 secondi diventa rossa e pulsa piano.
 // Avvisi a step (5, 2 e 1 minuto), segnale forte a 30 secondi e countdown grande da 10, con suono e vibrazione.
@@ -1440,6 +1998,18 @@ function mostraRegole() {
       <li>Assassino che nessun buono vota: +${G.PUNTI.assassinoInvisibile}. Mitomane: +${G.PUNTI.votoAlMitomane} per ogni buono che lo vota (max +${G.PUNTI.maxMitomane}).</li>
       <li>Serie di vittorie nella stessa stanza: +1 alla terza di fila, +2 alla quarta, +3 dalla quinta.</li>
     </ul>
+    <h2>😈 Modalità Traditori (da ${T.MIN} a ${T.MAX} giocatori)</h2>
+    <p>Il capo stanza la attiva in lobby. Pochi ${pillTr(T.TRADITORE, 'Traditori')} (2 fino a 9 giocatori, 3 fino a 13, poi 4) si conoscono tra loro; tutti gli altri sono ${pillTr(T.FEDELE, 'Fedeli')}.</p>
+    <ul class="fatti">
+      <li><strong>Primo giorno</strong>: i Fedeli ricevono una parola segreta, i Traditori solo la categoria. A turno ognuno dice una parola collegata, poi si vota. Solo oggi si può votare ${G.EMOJI_CIELO} Nessuno.</li>
+      <li><strong>Tavola rotonda</strong>: si espelle il più votato, che rivela il ruolo. Parità: ballottaggio tra i pari, poi sorte. I voti diventano pubblici.</li>
+      <li><strong>Notte</strong>: i Traditori scelgono chi uccidere; i Fedeli dicono chi sospettano (al mattino si vede il conteggio anonimo).</li>
+      <li><strong>Prova</strong>: un minigioco sul telefono. Chi vince riceve in segreto ${T.PREMI.scudo.emoji} Scudo (${T.PREMI.scudo.spiega}), ${T.PREMI.pugnale.emoji} Pugnale (${T.PREMI.pugnale.spiega}) o ${T.PREMI.busta.emoji} Busta (${T.PREMI.busta.spiega}).</li>
+      <li><strong>Finale</strong> a ${T.SOGLIA_FINALE}: se tutti votano ${G.EMOJI_CIELO} Finiamo qui la partita finisce, altrimenti si espelle il più votato senza rivelarne il ruolo. Con 2 rimasti si chiude.</li>
+      <li>Vincono i Fedeli se espellono tutti i Traditori; vincono i Traditori se alla fine ne resta almeno uno.</li>
+      <li>Chi viene eliminato diventa 👻 fantasma: niente più voti, ma scommette su chi verrà espulso.</li>
+      <li>Punti: squadra vincente +${T.PUNTI.vittoria}; Fedele che vota un Traditore +${T.PUNTI.votoTraditore}, un Fedele ${T.PUNTI.votoFedele}; sospetto notturno giusto +${T.PUNTI.sospettoGiusto}; Traditore mai scoperto +${T.PUNTI.traditoreVivo}; scommessa giusta +${T.PUNTI.scommessa}; vincitori ancora vivi +${T.PUNTI.montepremi} per ogni prova giocata.</li>
+    </ul>
     <button class="primary full" data-chiudi>Chiudi</button>`;
   $d.addEventListener('click', (e) => { if (e.target === $d || e.target.closest('[data-chiudi]')) $d.close(); });
   $d.addEventListener('close', () => $d.remove());
@@ -1500,11 +2070,22 @@ document.addEventListener('click', (e) => {
     'off-conferma': votaOff,
     'off-ricambia': () => ricambiaOff(uid),
     'off-risultato': concludiOff,
+    'tr-invia': () => tenta(inviaScelta),
+    'tr-cambia': () => { S.trCambia = true; S.scelta = S.trMio?.b ?? S.trMio?.scommessa ?? null; render(); },
+    'tr-avanti': () => tenta(trAvanti),
+    'tr-chiudi': () => sonoHost() && confirm('Chiudere adesso questa fase? Chi non ha ancora scelto resta senza scelta.') && tenta(() => trChiudi(S.room.tr.chiave)),
   };
   azioni[action]?.();
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.dataset.change === 'tr-scelta') {
+    S.scelta = e.target.value || null;
+    const $c = document.querySelector('[data-action=tr-invia]');
+    if ($c) $c.disabled = !S.scelta;
+    return;
+  }
+  if (e.target.dataset.change === 'tr-pugnale') { S.trPugnale = e.target.checked; return; }
   if (e.target.dataset.change === 'voto') {
     if (S.scelta && S.scelta !== e.target.value) S.cambi++;
     S.scelta = e.target.value || null;
@@ -1514,6 +2095,7 @@ document.addEventListener('change', (e) => {
   }
   if (!sonoHost()) return;
   if (e.target.dataset.change === 'timer') tenta(() => update(roomRef(), { timer: Number(e.target.value) || TIMER_DEFAULT }));
+  if (e.target.dataset.change === 'traditori') tenta(() => update(roomRef(), { modalita: e.target.checked ? 'traditori' : null }));
   if (e.target.dataset.change === 'timer-attivo') tenta(() => update(roomRef(), { timer: e.target.checked ? TIMER_DEFAULT : 0 }));
 });
 

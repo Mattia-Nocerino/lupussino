@@ -30,6 +30,13 @@
           "$uid": {
             ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && data.parent().parent().child('status').val() === 'playing' && data.parent().parent().child('inGioco').child($uid).exists() && (!data.parent().parent().child('fineVoto').exists() || now <= data.parent().parent().child('fineVoto').val() + 3000)"
           }
+        },
+        "tr": {
+          "fatto": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && data.parent().parent().parent().child('status').val() === 'playing' && data.parent().parent().parent().child('inGioco').child($uid).exists() && newData.val() === data.parent().parent().child('chiave').val()"
+            }
+          }
         }
       }
     },
@@ -73,6 +80,40 @@
       ".write": "auth != null && !newData.exists() && auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true",
       "$gameId": {
         ".write": "auth != null && !data.exists() && newData.child('hostUid').val() === auth.uid"
+      }
+    },
+    "azioni": {
+      ".write": "auth != null && !newData.exists() && auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true",
+      "$roomId": {
+        ".read": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid",
+        ".write": "auth != null && (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true))",
+        "$chiave": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('tr').child('chiave').val() === $chiave && (!root.child('rooms').child($roomId).child('tr').child('fine').exists() || now <= root.child('rooms').child($roomId).child('tr').child('fine').val() + 3000) && root.child('rooms').child($roomId).child('inGioco').child($uid).exists()",
+            ".validate": "newData.hasChildren() && (!newData.child('b').exists() || newData.child('b').isString()) && (!newData.child('scommessa').exists() || newData.child('scommessa').isString())"
+          }
+        }
+      }
+    },
+    "notte": {
+      ".write": "auth != null && !newData.exists() && auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true",
+      "$roomId": {
+        ".write": "auth != null && (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true))",
+        "$chiave": {
+          ".read": "auth != null && (root.child('rooms').child($roomId).child('hostUid').val() === auth.uid || (root.child('traditori').child($roomId).child(root.child('rooms').child($roomId).child('round').val() + '').child(auth.uid).exists() && root.child('rooms').child($roomId).child('tr').child('chiave').val() === $chiave))",
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('status').val() === 'playing' && root.child('rooms').child($roomId).child('tr').child('chiave').val() === $chiave && (!root.child('rooms').child($roomId).child('tr').child('fine').exists() || now <= root.child('rooms').child($roomId).child('tr').child('fine').val() + 3000) && root.child('traditori').child($roomId).child(root.child('rooms').child($roomId).child('round').val() + '').child(auth.uid).exists() && root.child('rooms').child($roomId).child('tr').child('vivi').child($uid).exists()",
+            ".validate": "newData.isString()"
+          }
+        }
+      }
+    },
+    "traditori": {
+      ".write": "auth != null && !newData.exists() && auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true",
+      "$roomId": {
+        ".read": "auth != null && root.child('rooms').child($roomId).child('hostUid').val() === auth.uid",
+        ".write": "auth != null && (root.child('rooms').child($roomId).child('hostUid').val() === auth.uid || (!newData.exists() && (auth.token.email === 'nocerino.mattia@gmail.com' && auth.token.email_verified === true)))"
       }
     }
   }
