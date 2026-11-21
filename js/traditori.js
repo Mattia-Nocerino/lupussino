@@ -177,19 +177,31 @@ export function classificaProva(risultati, { tr }) {
 }
 
 // Il premio è a scelta: se non hai scelto, o hai già quello scudo/pugnale, prendi il primo che non hai (la busta sempre).
+// Prossima prova: mai la stessa due volte finché non sono uscite tutte (giocate: tipi già usati in questa partita).
+export function prossimaProva(tipi, giocate = [], rng = casuale) {
+  const fatte = new Set(giocate);
+  const nuove = tipi.filter((x) => !fatte.has(x));
+  const tipo = pesca(nuove.length ? nuove : tipi, rng);
+  return { tipo, giocate: nuove.length ? [...giocate, tipo] : [tipo] };
+}
+
 export function premioPer(scelta, posseduti = {}) {
   if (scelta in PREMI && (scelta === 'busta' || !posseduti[scelta])) return scelta;
   return ['scudo', 'pugnale'].find((p) => !posseduti[p]) ?? 'busta';
 }
 
-// Asta silenziosa: vince l'offerta più alta (valida: intera, tra 1 e le monete che hai), parità a sorte.
+// Asta silenziosa: vince l'offerta più alta (valida: intera, tra 1 e le monete che hai).
+// Parità: vince chi ha offerto per primo (at = ora del server); senza orari, a sorte.
 export function esitoAsta(offerte, { tr, monete = {}, rng = casuale }) {
   const valide = Object.entries(offerte ?? {})
     .filter(([u, o]) => tr.vivi?.[u] && Number.isInteger(o?.offerta) && o.offerta > 0 && o.offerta <= (monete[u] ?? 0));
   if (!valide.length) return { vincitore: null };
   const max = Math.max(...valide.map(([, o]) => o.offerta));
-  const primi = valide.filter(([, o]) => o.offerta === max).map(([u]) => u);
-  return { vincitore: pesca(primi, rng), offerta: max, ...(primi.length > 1 && { sorteggio: primi }) };
+  const pari = valide.filter(([, o]) => o.offerta === max);
+  if (pari.length === 1) return { vincitore: pari[0][0], offerta: max };
+  const conOra = pari.filter(([, o]) => Number.isFinite(o.at)).sort(([, a], [, b]) => a.at - b.at);
+  if (conOra.length) return { vincitore: conOra[0][0], offerta: max, primoA: true };
+  return { vincitore: pesca(pari.map(([u]) => u), rng), offerta: max, sorteggio: pari.map(([u]) => u) };
 }
 
 // ---------- punti ----------

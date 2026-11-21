@@ -102,6 +102,16 @@ test('prova: classifica tra i vivi, premio a scelta, asta', () => {
   assert.equal(T.esitoAsta({ b: { offerta: 6 } }, { tr: t, monete }).vincitore, null); // più di quante ne ha
   assert.equal(T.esitoAsta({ z: { offerta: 3 } }, { tr: t, monete: { z: 10 } }).vincitore, null); // fantasma o estraneo
   assert.deepEqual(T.esitoAsta({ a: { offerta: 2 }, c: { offerta: 2 } }, { tr: t, monete, rng: () => 0 }).sorteggio, ['a', 'c']);
+  assert.equal(T.esitoAsta({ a: { offerta: 2, at: 500 }, c: { offerta: 2, at: 300 } }, { tr: t, monete }).vincitore, 'c'); // parità: il primo
+});
+
+test('prove: nessuna ripetizione finché non sono uscite tutte', () => {
+  const tipi = ['x', 'y', 'z'];
+  let giocate = [];
+  const usciti = [];
+  for (let k = 0; k < 6; k++) { const r = T.prossimaProva(tipi, giocate); usciti.push(r.tipo); giocate = r.giocate; }
+  assert.deepEqual([...usciti.slice(0, 3)].sort(), tipi);
+  assert.deepEqual([...usciti.slice(3)].sort(), tipi);
 });
 
 test('punti: squadra, voti, sospetti, scommesse, montepremi', () => {

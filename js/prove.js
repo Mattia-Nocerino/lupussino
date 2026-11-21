@@ -8,7 +8,7 @@ export const TIPI = {
   intruso: { emoji: '👁️', nome: 'Occhio di lince', spiega: 'Trova l\'unica emoji diversa nella griglia. 5 griglie, ogni errore costa 2 secondi.' },
   memoria: { emoji: '🧠', nome: 'Memoria', spiega: 'Guarda la sequenza di emoji e ripetila. A ogni giro si allunga di uno: al primo errore ti fermi.' },
   colori: { emoji: '🎨', nome: 'Colori bugiardi', spiega: 'Tocca il colore con cui è scritta la parola, non quello che dice. 15 parole: conta chi ne azzecca di più.' },
-  asta: { emoji: '💰', nome: 'Asta silenziosa', spiega: 'Punta in segreto le tue monete: chi offre di più prende il premio e paga quanto ha offerto. Gli altri non pagano niente.' },
+  asta: { emoji: '💰', nome: 'Asta silenziosa', spiega: 'Punta in segreto le tue monete: chi offre di più prende il premio e paga quanto ha offerto. Gli altri non pagano niente. A parità vince chi ha offerto per primo.' },
   ricordi: { emoji: '📜', nome: 'Chi si ricorda?', spiega: '5 domande su quello che è successo in questa partita. Vince chi ne indovina di più.' },
 };
 

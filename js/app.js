@@ -1371,7 +1371,7 @@ function faseTr(base, fase, extra = {}, round = S.room.round) {
   const n = (base.n ?? 0) + 1;
   const durata = fase === 'tavola' ? (minutiTimer(S.room) ? minutiTimer(S.room) * 60_000 : null) : (T.DURATA[fase] ?? null);
   return {
-    giorno: base.giorno, vivi: base.vivi, eventi: base.eventi ?? null, traditori: base.traditori,
+    giorno: base.giorno, vivi: base.vivi, eventi: base.eventi ?? null, traditori: base.traditori, giocate: base.giocate ?? null,
     n, chiave: `${round}-${n}`, fase, fine: durata ? ora() + durata : null, durata, ...extra,
   };
 }
@@ -1609,8 +1609,9 @@ async function trAvanti() {
   else {
     const fatti = fattiPartita();
     const tipi = Object.keys(PR.TIPI).filter((x) => x !== 'ricordi' || fatti.length >= 4);
-    nuovo = faseTr(t, 'prova', {
-      prova: { tipo: tipi[Math.floor(G.casuale() * tipi.length)], seme: Math.floor(G.casuale() * 2 ** 32) },
+    const { tipo, giocate } = T.prossimaProva(tipi, Object.values(t.giocate ?? {}));
+    nuovo = faseTr({ ...t, giocate }, 'prova', {
+      prova: { tipo, seme: Math.floor(G.casuale() * 2 ** 32) },
     });
   }
   await update(roomRef(), { tr: nuovo });
@@ -1671,7 +1672,7 @@ function montaProva() {
     S.provaChiave = t.chiave;
     S.provaIniziata = false;
     S.provaEl = PR.creaGioco({ tipo: t.prova.tipo, seme: t.prova.seme, fatti: fattiPartita(), nomi: S.room.inGioco, monete: S.mano?.monete ?? 0 },
-      (ris) => tenta(() => inviaTr({ ...ris, ...(S.trPremio && { premio: S.trPremio }) })));
+      (ris) => tenta(() => inviaTr({ ...ris, ...(S.trPremio && { premio: S.trPremio }), ...(t.prova.tipo === 'asta' && { at: serverTimestamp() }) })));
     S.provaEl.addEventListener('click', () => { S.provaIniziata = true; }, { once: true });
   }
   $posto.append(S.provaEl);
