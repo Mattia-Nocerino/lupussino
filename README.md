@@ -9,6 +9,7 @@ si pubblica su GitHub Pages e basta.
 |---|---|
 | `index.html`, `css/style.css` | pagina e stile (mobile first) |
 | `js/game.js` | logica pura: configurazioni, distribuzione, informazioni per ruolo, calcolo del vincitore |
+| `js/traditori.js`, `js/prove.js` | modalità Traditori (logica pura) e minigiochi delle prove |
 | `js/app.js` | interfaccia, login, stanze, partita in tempo reale sul Realtime Database, presenza online |
 | `js/rete.js`, `js/dati.js`, `js/p2p.js` | stanza senza internet con più telefoni: il telefono del capo fa da database, collegamento WebRTC via QR |
 | `vendor/` | librerie QR (qrcode-generator MIT, jsQR Apache-2.0) |
@@ -71,6 +72,23 @@ Dati nel Realtime Database:
 Scelta consapevole: senza backend il capo stanza "fa da server", quindi con gli strumenti del browser da computer potrebbe sbirciare le carte altrui. Giocando da telefono non è un problema.
 
 Limite noto: le regole del Realtime Database non sanno contare i figli di un nodo, quindi il massimo di 9 giocatori per stanza è controllato dall'app e non dalle regole.
+
+## Modalità Traditori (da 7 a 16 giocatori, solo online)
+
+Il capo stanza la attiva con lo switch in lobby, che compare solo da 7 giocatori. Fedeli contro 2–4 Traditori:
+giorno 1 con parola segreta e tavola rotonda (si può votare ☁️ Nessuno), poi notte (omicidio e sondaggio dei sospetti),
+mattina, prova sul telefono (scudo, pugnale o busta, vincitore segreto), tavola rotonda; a 4 giocatori il finale col voto al cielo.
+
+| Percorso | Chi legge | Contenuto |
+|---|---|---|
+| `rooms/{id}/tr` | tutti i loggati | fase, chiave della fase, vivi, eventi pubblici (espulsioni con voti, omicidi), annuncio |
+| `rooms/{id}/tr/fatto/{uid}` | tutti | chiave della fase in cui hai fatto la tua scelta (scrive solo il giocatore) |
+| `secret/{id}/{round}` | solo il capo | ruoli, parola, premi, sondaggi, scommesse |
+| `traditori/{id}/{round}/{uid}` | solo il capo | chi è Traditore: serve alle regole per la notte |
+| `notte/{id}/{chiave}/{uid}` | i Traditori di quel round e il capo | la vittima scelta da ogni Traditore |
+| `azioni/{id}/{chiave}/{uid}` | quel giocatore e il capo | voto (con pugnale), sospetto notturno, scommessa del fantasma, risultato della prova |
+
+Il capo chiude ogni fase allo scadere o quando hanno fatto tutti (o con "Chiudi ora"), e scrive l'esito in un'unica scrittura.
 
 ## Senza internet
 

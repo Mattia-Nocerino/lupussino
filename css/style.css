@@ -248,3 +248,30 @@ details.altro .mazzo-btn { width: 100%; }
 .titolo-riga { align-items: baseline; }
 .list button.link { text-decoration: none; color: var(--muted); font-size: .85rem; }
 details.altro button.link { text-decoration: none; }
+
+/* ---------- modalità Traditori ---------- */
+.annuncio { text-align: center; padding: 14px; border-radius: var(--radius); background: var(--panel-2); font-size: 1.1rem; }
+.annuncio.ko { background: #3d1717; color: var(--text); }
+.annuncio.ok { background: #173a2a; color: var(--text); }
+.ordine { font-weight: 700; line-height: 1.8; }
+.fantasma { text-align: center; color: var(--muted); }
+.check { display: flex; align-items: center; gap: 10px; font-size: .95rem; }
+.check input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.carta .premi { list-style: none; padding: 0; margin: 12px 0 0; text-align: left; font-size: .95rem; }
+.carta .premi li { padding: 6px 0; border-top: 1px solid rgba(255, 255, 255, .15); }
+.voti-tr li { font-size: .95rem; }
+.gioco { text-align: center; }
+.gioco form { margin-top: 12px; }
+.gioco input { font-size: 1.4rem; text-align: center; }
+.gioco-grande { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; margin: 8px 0; }
+.gioco-domanda { font-size: 1.15rem; font-weight: 700; }
+.gioco-fine { font-size: 1.3rem; font-weight: 700; color: var(--buoni); }
+.griglia { display: grid; gap: 4px; }
+.griglia button { padding: 0; aspect-ratio: 1; font-size: 1.5rem; line-height: 1; border-radius: 8px; }
+.riflessi { width: 100%; min-height: 220px; font-size: 1.6rem; font-weight: 800; border: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.riflessi small { font-size: .9rem; font-weight: 400; }
+.riflessi.aspetta { background: #3d1717; }
+.riflessi.via { background: var(--buoni); color: #0b1f15; }
+.sbagliato { animation: scuoti .35s; }
+@keyframes scuoti { 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
+@media (prefers-reduced-motion: reduce) { .sbagliato { animation: none; outline: 2px solid var(--cattivi); } }

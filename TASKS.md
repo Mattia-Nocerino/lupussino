@@ -52,6 +52,12 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 - ✅ Serie di vittorie nella stessa stanza: +1 alla terza di fila, +2 alla quarta, +3 dalla quinta.
 - ❌ Moltiplicatore per numero di giocatori: scartato (gonfierebbe i punti dei gruppi grandi).
 
+## Fase 6: modalità Traditori (21 novembre 2026)
+- ✅ Switch in lobby da 7 a 16 giocatori, solo online (bozza: lupussino-note/modalita-traditori.md)
+- ✅ Parola segreta e cielo il primo giorno, notte con sondaggio, prove (calcolo, riflessi, occhio di lince, chi si ricorda), scudo, pugnale, busta, finale a 4, fantasmi che scommettono, punti
+- ⬜ Prova dal vivo con amici veri e taratura dei tempi (notte 90 s, prova 90 s, ballottaggio 2 min, finale 3 min)
+- ⬜ Prove dal vivo (rimandate da Mattia), senza internet (più avanti)
+
 ## Regole confermate da Mattia (7 ottobre 2026)
 - Da 3 a 9 giocatori (tutte le configurazioni).
 - Pareggio giusti/sbagliati senza voti al Mitomane: **pareggio**, non vince nessuno. Con almeno un voto sbagliato al Mitomane vincono i cattivi.
