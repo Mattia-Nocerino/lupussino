@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CIELO, BUONI, CATTIVI } from '../js/game.js';
 import * as T from '../js/traditori.js';
-import { operazioni, griglie, attese, domande } from '../js/prove.js';
+import { operazioni, griglie, attese, domande, sequenza, parole, SIMBOLI } from '../js/prove.js';
 
 const uids = (n) => Array.from({ length: n }, (_, i) => `u${i}`);
 const tr = (vivi) => ({ vivi: Object.fromEntries(vivi.map((u) => [u, true])) });
@@ -120,6 +120,10 @@ test('prove: stessa sfida dallo stesso seme', () => {
   for (const o of operazioni(7)) assert.ok(Number.isInteger(o.risposta) && o.risposta > 0, o.testo);
   assert.deepEqual(griglie(5), griglie(5));
   assert.deepEqual(attese(9), attese(9));
+  assert.deepEqual(sequenza(4), sequenza(4));
+  assert.ok(sequenza(4).every((k) => k >= 0 && k < SIMBOLI.length));
+  assert.deepEqual(parole(8), parole(8));
+  assert.ok(parole(8).every((p) => p.parola !== p.inchiostro));
   const fatti = [{ domanda: 'x', giusta: 'a' }, { domanda: 'y', giusta: 'b' }];
   const nomi = { a: 'A', b: 'B', c: 'C', d: 'D', e: 'E' };
   const d = domande(3, fatti, nomi);
