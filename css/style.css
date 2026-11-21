@@ -275,3 +275,9 @@ details.altro button.link { text-decoration: none; }
 .sbagliato { animation: scuoti .35s; }
 @keyframes scuoti { 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
 @media (prefers-reduced-motion: reduce) { .sbagliato { animation: none; outline: 2px solid var(--cattivi); } }
+.simboli, .colori { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.colori { grid-template-columns: repeat(2, 1fr); }
+.simboli button { font-size: 1.8rem; padding: 12px 0; }
+.colori button { font-size: 1.1rem; padding: 14px 0; }
+.memoria-mostra, .memoria-scritta { min-height: 3rem; }
+.memoria-scritta { font-size: 1.4rem; letter-spacing: 2px; word-break: break-all; }

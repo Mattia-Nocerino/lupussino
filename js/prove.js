@@ -6,6 +6,9 @@ export const TIPI = {
   calcolo: { emoji: '🧮', nome: 'Calcolo a raffica', spiega: '10 operazioni il più in fretta possibile. Ogni errore costa 3 secondi.' },
   riflessi: { emoji: '⚡', nome: 'Riflessi', spiega: 'Tocca appena lo schermo diventa verde. 3 manche: se tocchi prima, +1 secondo.' },
   intruso: { emoji: '👁️', nome: 'Occhio di lince', spiega: 'Trova l\'unica emoji diversa nella griglia. 5 griglie, ogni errore costa 2 secondi.' },
+  memoria: { emoji: '🧠', nome: 'Memoria', spiega: 'Guarda la sequenza di emoji e ripetila. A ogni giro si allunga di uno: al primo errore ti fermi.' },
+  colori: { emoji: '🎨', nome: 'Colori bugiardi', spiega: 'Tocca il colore con cui è scritta la parola, non quello che dice. 15 parole: conta chi ne azzecca di più.' },
+  asta: { emoji: '💰', nome: 'Asta silenziosa', spiega: 'Punta in segreto le tue monete: chi offre di più prende il premio e paga quanto ha offerto. Gli altri non pagano niente. A parità vince chi ha offerto per primo.' },
   ricordi: { emoji: '📜', nome: 'Chi si ricorda?', spiega: '5 domande su quello che è successo in questa partita. Vince chi ne indovina di più.' },
 };
 
@@ -44,6 +47,20 @@ export function griglie(seme, quante = 5, lato = 6) {
   });
 }
 
+export const SIMBOLI = ['🐺', '🔪', '🛡️', '🗡️', '✉️', '☁️'];
+export const sequenza = (seme, lunghezza = 12) => { const rng = rngDa(seme); return Array.from({ length: lunghezza }, () => intero(rng, 0, SIMBOLI.length - 1)); };
+
+export const COLORI = { ROSSO: '#e5534b', BLU: '#4f8cff', VERDE: '#4fc38a', GIALLO: '#f2c23d' };
+export function parole(seme, quante = 15) {
+  const rng = rngDa(seme);
+  const nomi = Object.keys(COLORI);
+  return Array.from({ length: quante }, () => {
+    const parola = nomi[intero(rng, 0, nomi.length - 1)];
+    const altri = nomi.filter((n) => n !== parola);
+    return { parola, inchiostro: altri[intero(rng, 0, altri.length - 1)] }; // sempre diverso: è qui il trucco
+  });
+}
+
 // Domande su fatti pubblici della partita. fatti: [{ domanda, giusta, opzioni }] già preparati dall'app.
 export function domande(seme, fatti, nomi, quante = 5) {
   const rng = rngDa(seme);
@@ -58,7 +75,7 @@ export function domande(seme, fatti, nomi, quante = 5) {
 // Crea l'elemento del gioco una volta sola: l'app lo riaggancia alla pagina a ogni aggiornamento, così non si perde.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function creaGioco({ tipo, seme, fatti = [], nomi = {} }, fine) {
+export function creaGioco({ tipo, seme, fatti = [], nomi = {}, monete = 0 }, fine) {
   const $el = document.createElement('div');
   $el.className = 'gioco';
   const info = TIPI[tipo];
@@ -73,6 +90,19 @@ export function creaGioco({ tipo, seme, fatti = [], nomi = {} }, fine) {
   const scuoti = ($x) => { $x.classList.remove('sbagliato'); void $x.offsetWidth; $x.classList.add('sbagliato'); vibra(120); };
 
   const giochi = {
+    asta() {
+      $el.innerHTML = `<p>Hai <strong>${monete} 🪙</strong>. Quanto offri?</p>
+        <div class="gioco-grande"><output>0</output> 🪙</div>
+        <input type="range" min="0" max="${monete}" step="1" value="0" aria-label="Offerta">
+        <button class="primary full">Offri</button>`;
+      const $r = $el.querySelector('input');
+      $r.oninput = () => { $el.querySelector('output').textContent = $r.value; };
+      $el.querySelector('button').onclick = () => {
+        const offerta = Number($r.value);
+        $el.innerHTML = `<p class="gioco-fine">Hai offerto ${offerta} 🪙</p><p class="muted">Aspetta gli altri: chi vince lo saprà solo lui.</p>`;
+        fine({ offerta, punti: 0, ms: 0 });
+      };
+    },
     calcolo() {
       const ops = operazioni(seme);
       let i = 0;
@@ -119,6 +149,57 @@ export function creaGioco({ tipo, seme, fatti = [], nomi = {} }, fine) {
           if (!$b) return;
           if (Number($b.dataset.k) === g.posto) { i++; if (i === gg.length) finito(); else mostra(); }
           else { penalita += 2000; scuoti($b); }
+        };
+      };
+      mostra();
+    },
+    memoria() {
+      const seq = sequenza(seme);
+      let lunghezza = 3;
+      const tastiera = () => `<div class="simboli">${SIMBOLI.map((e, k) => `<button data-k="${k}">${e}</button>`).join('')}</div>`;
+      const giro = () => {
+        $el.innerHTML = `<p class="muted">Guarda: ${lunghezza} simboli</p><div class="gioco-grande memoria-mostra">…</div>`;
+        const $m = $el.querySelector('.memoria-mostra');
+        let k = 0;
+        const passo = () => {
+          if (k === lunghezza) return ripeti();
+          $m.textContent = SIMBOLI[seq[k]];
+          setTimeout(() => { $m.textContent = ''; k++; setTimeout(passo, 200); }, 650);
+        };
+        setTimeout(passo, 500);
+      };
+      const ripeti = () => {
+        let k = 0;
+        $el.innerHTML = `<p class="muted">Ripeti la sequenza (${lunghezza})</p><div class="gioco-grande memoria-scritta">&nbsp;</div>${tastiera()}`;
+        const $s = $el.querySelector('.memoria-scritta');
+        $el.querySelector('.simboli').onclick = (e) => {
+          const $b = e.target.closest('button');
+          if (!$b) return;
+          if (Number($b.dataset.k) !== seq[k]) { scuoti($b); return finito(lunghezza - 1); }
+          $s.textContent = seq.slice(0, k + 1).map((x) => SIMBOLI[x]).join('');
+          k++;
+          if (k < lunghezza) return;
+          if (lunghezza === seq.length) return finito(lunghezza);
+          lunghezza++;
+          setTimeout(giro, 400);
+        };
+      };
+      giro();
+    },
+    colori() {
+      const pp = parole(seme);
+      let i = 0;
+      let giuste = 0;
+      const mostra = () => {
+        const p = pp[i];
+        $el.innerHTML = `<p class="muted">${i + 1} di ${pp.length}</p><div class="gioco-grande" style="color:${COLORI[p.inchiostro]}">${p.parola}</div>
+          <div class="colori">${Object.keys(COLORI).map((n) => `<button data-c="${n}">${n.toLowerCase()}</button>`).join('')}</div>`;
+        $el.querySelector('.colori').onclick = (e) => {
+          const $b = e.target.closest('button');
+          if (!$b) return;
+          if ($b.dataset.c === p.inchiostro) giuste++; else scuoti($el.querySelector('.gioco-grande'));
+          i++;
+          if (i === pp.length) finito(giuste); else mostra();
         };
       };
       mostra();

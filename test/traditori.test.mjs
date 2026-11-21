@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CIELO, BUONI, CATTIVI } from '../js/game.js';
 import * as T from '../js/traditori.js';
-import { operazioni, griglie, attese, domande } from '../js/prove.js';
+import { operazioni, griglie, attese, domande, sequenza, parole, SIMBOLI } from '../js/prove.js';
 
 const uids = (n) => Array.from({ length: n }, (_, i) => `u${i}`);
 const tr = (vivi) => ({ vivi: Object.fromEntries(vivi.map((u) => [u, true])) });
@@ -88,13 +88,30 @@ test('busta: tre nomi, almeno un Traditore, mai chi la riceve', () => {
   }
 });
 
-test('prova: vince il migliore tra i vivi, chi ha già il premio passa', () => {
+test('prova: classifica tra i vivi, premio a scelta, asta', () => {
   const t = tr(['a', 'b', 'c']);
   const ris = { a: { punti: 0, ms: 9000 }, b: { punti: 0, ms: 7000 }, c: { punti: 0, ms: 8000 }, z: { punti: 0, ms: 1 } };
-  assert.equal(T.vincitoreProva(ris, { tr: t, premio: 'scudo' }), 'b');
-  assert.equal(T.vincitoreProva(ris, { tr: t, premio: 'scudo', premi: { b: { scudo: true } } }), 'c');
-  assert.equal(T.vincitoreProva({ a: { punti: 4, ms: 9000 }, b: { punti: 3, ms: 1000 } }, { tr: t, premio: 'busta' }), 'a');
-  assert.equal(T.vincitoreProva({}, { tr: t, premio: 'busta' }), null);
+  assert.deepEqual(T.classificaProva(ris, { tr: t }), ['b', 'c', 'a']);
+  assert.deepEqual(T.classificaProva({ a: { punti: 4, ms: 9000 }, b: { punti: 3, ms: 1000 } }, { tr: t }), ['a', 'b']);
+  assert.equal(T.premioPer('pugnale', {}), 'pugnale');
+  assert.equal(T.premioPer('scudo', { scudo: true }), 'pugnale');
+  assert.equal(T.premioPer(undefined, { scudo: true, pugnale: true }), 'busta');
+  assert.equal(T.premioPer('busta', { scudo: true }), 'busta');
+  const monete = { a: 10, b: 5, c: 10 };
+  assert.deepEqual(T.esitoAsta({ a: { offerta: 3 }, b: { offerta: 5 }, c: { offerta: 0 } }, { tr: t, monete }), { vincitore: 'b', offerta: 5 });
+  assert.equal(T.esitoAsta({ b: { offerta: 6 } }, { tr: t, monete }).vincitore, null); // più di quante ne ha
+  assert.equal(T.esitoAsta({ z: { offerta: 3 } }, { tr: t, monete: { z: 10 } }).vincitore, null); // fantasma o estraneo
+  assert.deepEqual(T.esitoAsta({ a: { offerta: 2 }, c: { offerta: 2 } }, { tr: t, monete, rng: () => 0 }).sorteggio, ['a', 'c']);
+  assert.equal(T.esitoAsta({ a: { offerta: 2, at: 500 }, c: { offerta: 2, at: 300 } }, { tr: t, monete }).vincitore, 'c'); // parità: il primo
+});
+
+test('prove: nessuna ripetizione finché non sono uscite tutte', () => {
+  const tipi = ['x', 'y', 'z'];
+  let giocate = [];
+  const usciti = [];
+  for (let k = 0; k < 6; k++) { const r = T.prossimaProva(tipi, giocate); usciti.push(r.tipo); giocate = r.giocate; }
+  assert.deepEqual([...usciti.slice(0, 3)].sort(), tipi);
+  assert.deepEqual([...usciti.slice(3)].sort(), tipi);
 });
 
 test('punti: squadra, voti, sospetti, scommesse, montepremi', () => {
@@ -104,9 +121,10 @@ test('punti: squadra, voti, sospetti, scommesse, montepremi', () => {
     sondaggi: { 1: { b: 'a', c: 'a' } },
     scommesse: { x: { g: 'a', espulso: 'a' } },
     prove: 2,
+    monete: { b: 5, a: 1 },
   };
   const p = T.punteggi(ruoli, tr(['b', 'c']), storia, BUONI);
-  assert.equal(p.b.totale, 10 + 2 * 2 + 1 + 2); // vittoria, 2 voti giusti, 1 sospetto, montepremi
+  assert.equal(p.b.totale, 10 + 2 * 2 + 1 + 2 + 2); // vittoria, 2 voti giusti, 1 sospetto, montepremi, 5 monete
   assert.equal(p.c.totale, 10 - 1 + 1 + 2);
   assert.equal(p.g.totale, 10 + 1); // fantasma: vittoria e scommessa, niente montepremi
   assert.equal(p.a.totale, 0);
@@ -120,6 +138,10 @@ test('prove: stessa sfida dallo stesso seme', () => {
   for (const o of operazioni(7)) assert.ok(Number.isInteger(o.risposta) && o.risposta > 0, o.testo);
   assert.deepEqual(griglie(5), griglie(5));
   assert.deepEqual(attese(9), attese(9));
+  assert.deepEqual(sequenza(4), sequenza(4));
+  assert.ok(sequenza(4).every((k) => k >= 0 && k < SIMBOLI.length));
+  assert.deepEqual(parole(8), parole(8));
+  assert.ok(parole(8).every((p) => p.parola !== p.inchiostro));
   const fatti = [{ domanda: 'x', giusta: 'a' }, { domanda: 'y', giusta: 'b' }];
   const nomi = { a: 'A', b: 'B', c: 'C', d: 'D', e: 'E' };
   const d = domande(3, fatti, nomi);

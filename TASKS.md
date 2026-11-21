@@ -54,7 +54,7 @@ Legenda: ✅ fatto · ⬜ da fare · ❓ serve una decisione di Mattia
 
 ## Fase 6: modalità Traditori (21 novembre 2026)
 - ✅ Switch in lobby da 7 a 16 giocatori, solo online (bozza: lupussino-note/modalita-traditori.md)
-- ✅ Parola segreta e cielo il primo giorno, notte con sondaggio, prove (calcolo, riflessi, occhio di lince, chi si ricorda), scudo, pugnale, busta, finale a 4, fantasmi che scommettono, punti
+- ✅ Parola segreta e cielo il primo giorno, notte con sondaggio, prove (calcolo, riflessi, occhio di lince, memoria, colori bugiardi, chi si ricorda, asta silenziosa), premio a scelta, monete (10 a testa, 3/2/1 a 2°/3°/4°, 1 punto ogni 2 avanzate), scudo, pugnale, busta, finale a 4, fantasmi che scommettono, punti
 - ⬜ Prova dal vivo con amici veri e taratura dei tempi (notte 90 s, prova 90 s, ballottaggio 2 min, finale 3 min)
 - ⬜ Prove dal vivo (rimandate da Mattia), senza internet (più avanti)
 
