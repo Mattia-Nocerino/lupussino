@@ -1388,7 +1388,7 @@ async function avviaTraditori() {
   // primo giorno: parola segreta, ordine casuale per dirla, e il cielo è ammesso
   const tr = faseTr(base, 'tavola', { cielo: true, ordine: G.mescola(uids) }, round);
   const modifiche = {
-    [`secret/${S.roomId}/${round}`]: { ruoli, ...parola, premi: null, storia: null },
+    [`secret/${S.roomId}/${round}`]: { ruoli, ...parola, premi: null, storia: null, monete: Object.fromEntries(uids.map((u) => [u, T.MONETE_INIZIALI])) },
     [`${roomPath()}/status`]: 'playing',
     [`${roomPath()}/round`]: round,
     [`${roomPath()}/inGioco`]: nomi,
@@ -1401,7 +1401,7 @@ async function avviaTraditori() {
     [`${roomPath()}/tr`]: tr,
   };
   for (const u of uids) {
-    modifiche[`hands/${S.roomId}/${round}/${u}`] = { ...mani[u], compagni: Object.keys(ruoli).filter((x) => x !== u && ruoli[u] === T.TRADITORE && ruoli[x] === T.TRADITORE) };
+    modifiche[`hands/${S.roomId}/${round}/${u}`] = { ...mani[u], monete: T.MONETE_INIZIALI, compagni: Object.keys(ruoli).filter((x) => x !== u && ruoli[u] === T.TRADITORE && ruoli[x] === T.TRADITORE) };
     if (ruoli[u] === T.TRADITORE) modifiche[`traditori/${S.roomId}/${round}/${u}`] = true;
   }
   await update(ref(db), modifiche);
@@ -1413,7 +1413,7 @@ function trOsserva() {
   const io = S.user.uid;
   if (S.manoRound !== S.room.round) { S.manoRound = S.room.round; S.coperta = true; S.mano = null; }
   if (S.room.inGioco?.[io] && S.trChiave !== t.chiave) {
-    Object.assign(S, { trChiave: t.chiave, scelta: null, trMio: null, trCambia: false, trPugnale: false, trNotte: null });
+    Object.assign(S, { trChiave: t.chiave, scelta: null, trMio: null, trCambia: false, trPugnale: false, trNotte: null, trPremio: null });
     caricaManoTr();
   }
   if (!sonoHost() || !SCELTE_FASE.includes(t.fase)) return;
@@ -1556,15 +1556,26 @@ async function trChiudi(chiave) {
       nuovo = faseTr({ ...t, giorno: t.giorno + 1, vivi: vivi2, eventi }, 'mattina', { annuncio: { ...ev, sospetti } });
       vincitore = T.vincitoreSubito(nuovo, ruoli);
     } else if (t.fase === 'prova') {
-      const chi = T.vincitoreProva(azioni, { tr: t, premio: t.premio, premi });
-      if (chi && t.premio === 'busta') {
-        modifiche[mano(chi, `premi/buste/g${t.giorno}`)] = { g: t.giorno, nomi: T.busta(chi, { ruoli, tr: t }).map((u) => r.inGioco[u]) };
-      } else if (chi) {
-        modifiche[sec(`premi/${chi}/${t.premio}`)] = true;
-        modifiche[mano(chi, `premi/${t.premio}`)] = true;
+      const monete = { ...(segreto.monete ?? {}) };
+      const cambiate = new Set();
+      let chi;
+      if (t.prova.tipo === 'asta') {
+        const asta = T.esitoAsta(azioni, { tr: t, monete });
+        chi = asta.vincitore;
+        if (chi) { monete[chi] -= asta.offerta; cambiate.add(chi); }
+      } else {
+        const classifica = T.classificaProva(azioni, { tr: t });
+        [chi] = classifica;
+        classifica.slice(1, T.MONETE_PIAZZA.length).forEach((u, i) => { monete[u] = (monete[u] ?? 0) + T.MONETE_PIAZZA[i + 1]; cambiate.add(u); });
       }
+      if (chi) {
+        const premio = T.premioPer(azioni[chi]?.premio, premi[chi]);
+        if (premio === 'busta') modifiche[mano(chi, `premi/buste/g${t.giorno}`)] = { g: t.giorno, nomi: T.busta(chi, { ruoli, tr: t }).map((u) => r.inGioco[u]) };
+        else { modifiche[sec(`premi/${chi}/${premio}`)] = true; modifiche[mano(chi, `premi/${premio}`)] = true; }
+      }
+      for (const u of cambiate) { modifiche[sec(`monete/${u}`)] = monete[u]; modifiche[mano(u, 'monete')] = monete[u]; }
       modifiche[sec('storia/prove')] = (segreto.storia?.prove ?? 0) + 1;
-      nuovo = faseTr(t, 'tavola', { annuncio: { tipo: 'prova', premio: t.premio, vinto: !!chi } });
+      nuovo = faseTr(t, 'tavola', { annuncio: { tipo: 'prova', vinto: !!chi, asta: t.prova.tipo === 'asta' } });
     } else if (t.fase === 'finale') {
       const esito = T.esitoFinale(azioni, { votanti: vivi });
       const voti = Object.fromEntries(vivi.map((u) => [u, { b: azioni[u]?.b && azioni[u].b !== u ? azioni[u].b : G.CIELO }]));
@@ -1598,9 +1609,7 @@ async function trAvanti() {
   else {
     const fatti = fattiPartita();
     const tipi = Object.keys(PR.TIPI).filter((x) => x !== 'ricordi' || fatti.length >= 4);
-    const premi = Object.keys(T.PREMI);
     nuovo = faseTr(t, 'prova', {
-      premio: premi[Math.floor(G.casuale() * premi.length)],
       prova: { tipo: tipi[Math.floor(G.casuale() * tipi.length)], seme: Math.floor(G.casuale() * 2 ** 32) },
     });
   }
@@ -1617,6 +1626,7 @@ async function fineTraditori(vincitore, t, segreto, modifiche) {
     sondaggi: segreto.storia?.sondaggi,
     scommesse: segreto.storia?.scommesse,
     prove: segreto.storia?.prove ?? 0,
+    monete: segreto.monete,
   };
   const punti = T.punteggi(ruoli, t, storia, vincitore);
   const vincitori = Object.keys(ruoli).filter((u) => T.squadra(ruoli[u]) === vincitore);
@@ -1660,7 +1670,8 @@ function montaProva() {
   if (S.provaChiave !== t.chiave) {
     S.provaChiave = t.chiave;
     S.provaIniziata = false;
-    S.provaEl = PR.creaGioco({ tipo: t.prova.tipo, seme: t.prova.seme, fatti: fattiPartita(), nomi: S.room.inGioco }, (ris) => tenta(() => inviaTr(ris)));
+    S.provaEl = PR.creaGioco({ tipo: t.prova.tipo, seme: t.prova.seme, fatti: fattiPartita(), nomi: S.room.inGioco, monete: S.mano?.monete ?? 0 },
+      (ris) => tenta(() => inviaTr({ ...ris, ...(S.trPremio && { premio: S.trPremio }) })));
     S.provaEl.addEventListener('click', () => { S.provaIniziata = true; }, { once: true });
   }
   $posto.append(S.provaEl);
@@ -1708,7 +1719,7 @@ function annuncioTr(a) {
       ${a.sorteggio ? '<p class="muted">Parità: deciso a sorte.</p>' : ''}${listaVoti(a.voti, 'Finiamo qui')}`,
     nessuno: () => `<div class="annuncio">${G.EMOJI_CIELO} Oggi nessuno viene espulso.</div>${listaVoti(a.voti)}`,
     pari: () => `<div class="annuncio">⚖️ Parità tra ${a.pari.map(chi).join(' e ')}: si rivota solo tra loro.</div>${listaVoti(a.voti)}`,
-    prova: () => `<p class="muted">🎯 Prova finita: ${a.vinto ? `qualcuno ha vinto ${T.PREMI[a.premio].emoji} ${T.PREMI[a.premio].nome}` : 'nessuno ha vinto il premio'}.</p>`,
+    prova: () => `<p class="muted">🎯 ${a.asta ? 'Asta chiusa' : 'Prova finita'}: ${a.vinto ? 'qualcuno ha vinto un premio' : 'nessuno ha vinto il premio'}${a.asta ? '' : ', e qualcuno ha guadagnato monete'}.</p>`,
   };
   return testi[a.tipo]?.() ?? '';
 }
@@ -1730,6 +1741,7 @@ function cartaTr() {
   return `<div class="carta scoperta ${m.squadra}" data-action="gira">
       <div class="ruolo"><span class="pill ${m.squadra} grande">${T.EMOJI[m.ruolo]} ${m.ruolo}</span></div>
       ${parola}<div>${esc(m.info)}</div>
+      <div class="muted">🪙 ${m.monete ?? 0} monete</div>
       ${oggetti.length ? `<ul class="premi">${oggetti.map((o) => `<li>${o}</li>`).join('')}</ul>` : ''}
       <p class="muted" style="margin-top:16px">Tocca per coprire</p></div>`;
 }
@@ -1807,8 +1819,10 @@ function vistaTraditori() {
   } else if (t.fase === 'esito') {
     corpo = `${annuncioTr(t.annuncio)}${continua(prossima())}`;
   } else if (t.fase === 'prova') {
-    const premio = T.PREMI[t.premio];
-    corpo = `<div class="annuncio">In palio: ${premio.emoji} <strong>${premio.nome}</strong></div><p class="muted">${premio.spiega}. Chi vince lo saprà solo lui.</p>
+    const scelta = Object.entries(T.PREMI).map(([k, p]) => `<option value="${k}" ${S.trPremio === k ? 'selected' : ''}>${p.emoji} ${p.nome}: ${p.spiega}</option>`).join('');
+    corpo = `<div class="annuncio">In palio: un premio a scelta ${Object.values(T.PREMI).map((p) => p.emoji).join(' ')}</div>
+      <p class="muted">Chi vince lo saprà solo lui. ${t.prova.tipo === 'asta' ? '' : `2°, 3° e 4° guadagnano ${T.MONETE_PIAZZA.slice(1).join(', ')} 🪙.`}</p>
+      ${fantasma ? '' : `<select data-change="tr-premio" aria-label="Premio scelto"><option value="" ${S.trPremio ? '' : 'selected'} disabled>Se vinci, cosa vuoi?</option>${scelta}</select>`}
       ${fantasma ? '<p>👻 I vivi stanno giocando.</p>'
     : fattoOra(io) && S.provaChiave !== t.chiave ? '<p>Hai già giocato: aspetta gli altri.</p>' : '<div id="prova-gioco"></div>'}`;
   } else if (t.fase === 'finale') {
@@ -2004,7 +2018,8 @@ function mostraRegole() {
       <li><strong>Primo giorno</strong>: i Fedeli ricevono una parola segreta, i Traditori solo la categoria. A turno ognuno dice una parola collegata, poi si vota. Solo oggi si può votare ${G.EMOJI_CIELO} Nessuno.</li>
       <li><strong>Tavola rotonda</strong>: si espelle il più votato, che rivela il ruolo. Parità: ballottaggio tra i pari, poi sorte. I voti diventano pubblici.</li>
       <li><strong>Notte</strong>: i Traditori scelgono chi uccidere; i Fedeli dicono chi sospettano (al mattino si vede il conteggio anonimo).</li>
-      <li><strong>Prova</strong>: un minigioco sul telefono. Chi vince riceve in segreto ${T.PREMI.scudo.emoji} Scudo (${T.PREMI.scudo.spiega}), ${T.PREMI.pugnale.emoji} Pugnale (${T.PREMI.pugnale.spiega}) o ${T.PREMI.busta.emoji} Busta (${T.PREMI.busta.spiega}).</li>
+      <li><strong>Prova</strong>: un minigioco sul telefono. Chi vince riceve in segreto il premio che ha scelto: ${T.PREMI.scudo.emoji} Scudo (${T.PREMI.scudo.spiega}), ${T.PREMI.pugnale.emoji} Pugnale (${T.PREMI.pugnale.spiega}) o ${T.PREMI.busta.emoji} Busta (${T.PREMI.busta.spiega}).</li>
+      <li><strong>Monete</strong>: si parte con ${T.MONETE_INIZIALI} 🪙. Nelle prove il 2°, 3° e 4° ne guadagnano ${T.MONETE_PIAZZA.slice(1).join(', ')}; all'asta silenziosa si puntano in segreto e chi offre di più paga e prende il premio. A fine partita 1 punto ogni ${T.PUNTI.monete} monete avanzate.</li>
       <li><strong>Finale</strong> a ${T.SOGLIA_FINALE}: se tutti votano ${G.EMOJI_CIELO} Finiamo qui la partita finisce, altrimenti si espelle il più votato senza rivelarne il ruolo. Con 2 rimasti si chiude.</li>
       <li>Vincono i Fedeli se espellono tutti i Traditori; vincono i Traditori se alla fine ne resta almeno uno.</li>
       <li>Chi viene eliminato diventa 👻 fantasma: niente più voti, ma scommette su chi verrà espulso.</li>
@@ -2086,6 +2101,7 @@ document.addEventListener('change', (e) => {
     return;
   }
   if (e.target.dataset.change === 'tr-pugnale') { S.trPugnale = e.target.checked; return; }
+  if (e.target.dataset.change === 'tr-premio') { S.trPremio = e.target.value || null; return; }
   if (e.target.dataset.change === 'voto') {
     if (S.scelta && S.scelta !== e.target.value) S.cambi++;
     S.scelta = e.target.value || null;

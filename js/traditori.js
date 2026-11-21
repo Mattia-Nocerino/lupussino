@@ -164,13 +164,32 @@ export function busta(ricevente, { ruoli, tr, rng = casuale }) {
   return mescola([t, ...altri], rng);
 }
 
-// Prova: vince il miglior risultato tra i vivi (più punti, poi meno tempo). Chi ha già quel premio passa il turno.
-export function vincitoreProva(risultati, { tr, premio, premi = {} }) {
-  const ordinati = Object.entries(risultati ?? {})
+// ---------- prove, premi e monete ----------
+export const MONETE_INIZIALI = 10;
+export const MONETE_PIAZZA = [0, 3, 2, 1]; // il 1° prende il premio, 2°, 3° e 4° prendono monete
+
+// Classifica di una prova tra i vivi: più punti, poi meno tempo.
+export function classificaProva(risultati, { tr }) {
+  return Object.entries(risultati ?? {})
     .filter(([u, r]) => tr.vivi?.[u] && r && Number.isFinite(r.ms))
-    .sort(([, a], [, b]) => (b.punti ?? 0) - (a.punti ?? 0) || a.ms - b.ms);
-  const libero = ordinati.find(([u]) => premio === 'busta' || !premi[u]?.[premio]);
-  return libero?.[0] ?? null;
+    .sort(([, a], [, b]) => (b.punti ?? 0) - (a.punti ?? 0) || a.ms - b.ms)
+    .map(([u]) => u);
+}
+
+// Il premio è a scelta: se non hai scelto, o hai già quello scudo/pugnale, prendi il primo che non hai (la busta sempre).
+export function premioPer(scelta, posseduti = {}) {
+  if (scelta in PREMI && (scelta === 'busta' || !posseduti[scelta])) return scelta;
+  return ['scudo', 'pugnale'].find((p) => !posseduti[p]) ?? 'busta';
+}
+
+// Asta silenziosa: vince l'offerta più alta (valida: intera, tra 1 e le monete che hai), parità a sorte.
+export function esitoAsta(offerte, { tr, monete = {}, rng = casuale }) {
+  const valide = Object.entries(offerte ?? {})
+    .filter(([u, o]) => tr.vivi?.[u] && Number.isInteger(o?.offerta) && o.offerta > 0 && o.offerta <= (monete[u] ?? 0));
+  if (!valide.length) return { vincitore: null };
+  const max = Math.max(...valide.map(([, o]) => o.offerta));
+  const primi = valide.filter(([, o]) => o.offerta === max).map(([u]) => u);
+  return { vincitore: pesca(primi, rng), offerta: max, ...(primi.length > 1 && { sorteggio: primi }) };
 }
 
 // ---------- punti ----------
@@ -182,9 +201,12 @@ export const PUNTI = {
   traditoreVivo: 3,   // Traditore arrivato alla fine senza farsi scoprire
   scommessa: 1,       // fantasma che indovina l'espulso
   montepremi: 1,      // ai vincitori ancora vivi, per ogni prova giocata
+  monete: 2,          // 1 punto ogni 2 monete avanzate
 };
 
-// storia (dal segreto del capo): { voti: {chiave: {uid: b}}, sondaggi: {giorno: {uid: b}}, scommesse: {chiave: {uid: b, espulso}}, prove: n }
+// storia (dal segreto del capo): { voti: {chiave: {uid: b}}, sondaggi: {giorno: {uid: b}}, scommesse: {chiave: {uid: b, espulso}}, prove: n, monete: {uid: n} }
+const n = (k, uno, tanti) => `${k} ${k === 1 ? uno : tanti}`;
+
 export function punteggi(ruoli, tr, storia, vincitore) {
   const t = (u) => ruoli[u] === TRADITORE;
   const punti = {};
@@ -199,14 +221,16 @@ export function punteggi(ruoli, tr, storia, vincitore) {
         if (!b || b === CIELO || !(b in ruoli)) continue;
         if (t(b)) giusti++; else sbagliati++;
       }
-      if (giusti) voci.push({ m: `${giusti} voti a un Traditore`, p: giusti * PUNTI.votoTraditore });
-      if (sbagliati) voci.push({ m: `${sbagliati} voti a un Fedele`, p: sbagliati * PUNTI.votoFedele });
+      if (giusti) voci.push({ m: `${n(giusti, 'voto', 'voti')} a un Traditore`, p: giusti * PUNTI.votoTraditore });
+      if (sbagliati) voci.push({ m: `${n(sbagliati, 'voto', 'voti')} a un Fedele`, p: sbagliati * PUNTI.votoFedele });
       const sospetti = Object.values(storia.sondaggi ?? {}).filter((s) => t(s?.[u])).length;
-      if (sospetti) voci.push({ m: `${sospetti} sospetti giusti di notte`, p: sospetti * PUNTI.sospettoGiusto });
+      if (sospetti) voci.push({ m: `${n(sospetti, 'sospetto giusto', 'sospetti giusti')} di notte`, p: sospetti * PUNTI.sospettoGiusto });
     }
     if (t(u) && tr.vivi?.[u]) voci.push({ m: 'Mai scoperto', p: PUNTI.traditoreVivo });
     const scommesse = Object.values(storia.scommesse ?? {}).filter((s) => s?.espulso && s[u] === s.espulso).length;
-    if (scommesse) voci.push({ m: `${scommesse} scommesse da fantasma`, p: scommesse * PUNTI.scommessa });
+    if (scommesse) voci.push({ m: `${n(scommesse, 'scommessa vinta', 'scommesse vinte')} da fantasma`, p: scommesse * PUNTI.scommessa });
+    const monete = Math.floor((storia.monete?.[u] ?? 0) / PUNTI.monete);
+    if (monete) voci.push({ m: `${n(storia.monete[u], 'moneta avanzata', 'monete avanzate')}`, p: monete });
     if (vinto && tr.vivi?.[u] && storia.prove) voci.push({ m: `Montepremi (${storia.prove} prove)`, p: storia.prove * PUNTI.montepremi });
     punti[u] = { totale: voci.reduce((s, v) => s + v.p, 0), voci };
   }

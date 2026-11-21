@@ -88,13 +88,20 @@ test('busta: tre nomi, almeno un Traditore, mai chi la riceve', () => {
   }
 });
 
-test('prova: vince il migliore tra i vivi, chi ha già il premio passa', () => {
+test('prova: classifica tra i vivi, premio a scelta, asta', () => {
   const t = tr(['a', 'b', 'c']);
   const ris = { a: { punti: 0, ms: 9000 }, b: { punti: 0, ms: 7000 }, c: { punti: 0, ms: 8000 }, z: { punti: 0, ms: 1 } };
-  assert.equal(T.vincitoreProva(ris, { tr: t, premio: 'scudo' }), 'b');
-  assert.equal(T.vincitoreProva(ris, { tr: t, premio: 'scudo', premi: { b: { scudo: true } } }), 'c');
-  assert.equal(T.vincitoreProva({ a: { punti: 4, ms: 9000 }, b: { punti: 3, ms: 1000 } }, { tr: t, premio: 'busta' }), 'a');
-  assert.equal(T.vincitoreProva({}, { tr: t, premio: 'busta' }), null);
+  assert.deepEqual(T.classificaProva(ris, { tr: t }), ['b', 'c', 'a']);
+  assert.deepEqual(T.classificaProva({ a: { punti: 4, ms: 9000 }, b: { punti: 3, ms: 1000 } }, { tr: t }), ['a', 'b']);
+  assert.equal(T.premioPer('pugnale', {}), 'pugnale');
+  assert.equal(T.premioPer('scudo', { scudo: true }), 'pugnale');
+  assert.equal(T.premioPer(undefined, { scudo: true, pugnale: true }), 'busta');
+  assert.equal(T.premioPer('busta', { scudo: true }), 'busta');
+  const monete = { a: 10, b: 5, c: 10 };
+  assert.deepEqual(T.esitoAsta({ a: { offerta: 3 }, b: { offerta: 5 }, c: { offerta: 0 } }, { tr: t, monete }), { vincitore: 'b', offerta: 5 });
+  assert.equal(T.esitoAsta({ b: { offerta: 6 } }, { tr: t, monete }).vincitore, null); // più di quante ne ha
+  assert.equal(T.esitoAsta({ z: { offerta: 3 } }, { tr: t, monete: { z: 10 } }).vincitore, null); // fantasma o estraneo
+  assert.deepEqual(T.esitoAsta({ a: { offerta: 2 }, c: { offerta: 2 } }, { tr: t, monete, rng: () => 0 }).sorteggio, ['a', 'c']);
 });
 
 test('punti: squadra, voti, sospetti, scommesse, montepremi', () => {
@@ -104,9 +111,10 @@ test('punti: squadra, voti, sospetti, scommesse, montepremi', () => {
     sondaggi: { 1: { b: 'a', c: 'a' } },
     scommesse: { x: { g: 'a', espulso: 'a' } },
     prove: 2,
+    monete: { b: 5, a: 1 },
   };
   const p = T.punteggi(ruoli, tr(['b', 'c']), storia, BUONI);
-  assert.equal(p.b.totale, 10 + 2 * 2 + 1 + 2); // vittoria, 2 voti giusti, 1 sospetto, montepremi
+  assert.equal(p.b.totale, 10 + 2 * 2 + 1 + 2 + 2); // vittoria, 2 voti giusti, 1 sospetto, montepremi, 5 monete
   assert.equal(p.c.totale, 10 - 1 + 1 + 2);
   assert.equal(p.g.totale, 10 + 1); // fantasma: vittoria e scommessa, niente montepremi
   assert.equal(p.a.totale, 0);

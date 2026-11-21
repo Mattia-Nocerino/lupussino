@@ -8,6 +8,7 @@ export const TIPI = {
   intruso: { emoji: '👁️', nome: 'Occhio di lince', spiega: 'Trova l\'unica emoji diversa nella griglia. 5 griglie, ogni errore costa 2 secondi.' },
   memoria: { emoji: '🧠', nome: 'Memoria', spiega: 'Guarda la sequenza di emoji e ripetila. A ogni giro si allunga di uno: al primo errore ti fermi.' },
   colori: { emoji: '🎨', nome: 'Colori bugiardi', spiega: 'Tocca il colore con cui è scritta la parola, non quello che dice. 15 parole: conta chi ne azzecca di più.' },
+  asta: { emoji: '💰', nome: 'Asta silenziosa', spiega: 'Punta in segreto le tue monete: chi offre di più prende il premio e paga quanto ha offerto. Gli altri non pagano niente.' },
   ricordi: { emoji: '📜', nome: 'Chi si ricorda?', spiega: '5 domande su quello che è successo in questa partita. Vince chi ne indovina di più.' },
 };
 
@@ -74,7 +75,7 @@ export function domande(seme, fatti, nomi, quante = 5) {
 // Crea l'elemento del gioco una volta sola: l'app lo riaggancia alla pagina a ogni aggiornamento, così non si perde.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function creaGioco({ tipo, seme, fatti = [], nomi = {} }, fine) {
+export function creaGioco({ tipo, seme, fatti = [], nomi = {}, monete = 0 }, fine) {
   const $el = document.createElement('div');
   $el.className = 'gioco';
   const info = TIPI[tipo];
@@ -89,6 +90,19 @@ export function creaGioco({ tipo, seme, fatti = [], nomi = {} }, fine) {
   const scuoti = ($x) => { $x.classList.remove('sbagliato'); void $x.offsetWidth; $x.classList.add('sbagliato'); vibra(120); };
 
   const giochi = {
+    asta() {
+      $el.innerHTML = `<p>Hai <strong>${monete} 🪙</strong>. Quanto offri?</p>
+        <div class="gioco-grande"><output>0</output> 🪙</div>
+        <input type="range" min="0" max="${monete}" step="1" value="0" aria-label="Offerta">
+        <button class="primary full">Offri</button>`;
+      const $r = $el.querySelector('input');
+      $r.oninput = () => { $el.querySelector('output').textContent = $r.value; };
+      $el.querySelector('button').onclick = () => {
+        const offerta = Number($r.value);
+        $el.innerHTML = `<p class="gioco-fine">Hai offerto ${offerta} 🪙</p><p class="muted">Aspetta gli altri: chi vince lo saprà solo lui.</p>`;
+        fine({ offerta, punti: 0, ms: 0 });
+      };
+    },
     calcolo() {
       const ops = operazioni(seme);
       let i = 0;
